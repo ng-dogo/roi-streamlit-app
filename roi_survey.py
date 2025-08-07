@@ -68,7 +68,7 @@ def intro():
             "pais": pais.strip()
         }
         st.session_state.started = True
-        st.experimental_rerun()
+        st.rerun()
 # ─────────────── PANTALLA 2: ENCUESTA CON SLIDERS ─────────
 def survey():
     st.image("ad_hoc_logo.png", width=160)
