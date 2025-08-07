@@ -9,19 +9,45 @@ st.set_page_config(page_title="ROI Weighting Survey", page_icon="⚡", layout="c
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&display=swap');
+
 html, body, [class*="css"]{
     font-family:'Montserrat',sans-serif;
     background:#FFFFFF !important;
     color:#1D1D1B;
 }
+
 :root{ --primary:#02593B; }
+
+/* Slider track y handle */
 div[data-baseweb="slider"] > div > div{background:var(--primary);}
 div[data-baseweb="slider"] > div > div > div{background:var(--primary);}
-span[data-baseweb="tooltip"]{background:var(--primary)!important;color:#FFFFFF!important;border:none!important;}
+
+/* Tooltip + número */
+span[data-baseweb="tooltip"]{
+    background:var(--primary)!important;
+    color:#FFFFFF!important;
+    border:none!important;
+}
 div[data-baseweb="slider"] span{color:#FFFFFF!important;}
+
+/* Botón principal */
 .stButton>button{background:var(--primary);color:#FFF;border:none;}
 .stButton>button:disabled{background:#CCCCCC;color:#666;}
+
+/* Contenedor general */
 .main .block-container{padding-top:2rem;max-width:850px;margin:auto;}
+
+/* Logo centrado */
+img[alt="ad_hoc_logo.png"] {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Ocultar íconos de ancla de títulos */
+a.anchor-link {
+    display: none;
+}
 </style>
 """, unsafe_allow_html=True)
 
