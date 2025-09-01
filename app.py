@@ -22,7 +22,7 @@ hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
 """
 st.markdown(MINI_CSS, unsafe_allow_html=True)
 
-# ─────────────── PARAMS (editables) ───────────────
+# ─────────────── PARAMS ───────────────
 RGI_COMPONENTS = [
     "Legal Framework",
     "Independence & Accountability",
@@ -33,14 +33,14 @@ RGI_COMPONENTS = [
     "Open Access to Information",
     "Transparency",
 ]
-DEFAULTS_CSV_PATH = "rgi_defaults.csv"   # subí este archivo al repo
-REQUIRE_TOTAL_100 = True                 # Submit habilitado solo si total == 100
+DEFAULTS_CSV_PATH = "rgi_defaults.csv"
+REQUIRE_TOTAL_100 = True
 
 # ─────────────── STATE ───────────────
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if "stage" not in st.session_state:
-    st.session_state.stage = 1  # 1 = email, 2 = allocation
+    st.session_state.stage = 1
 if "email" not in st.session_state:
     st.session_state.email = ""
 if "submitted" not in st.session_state:
@@ -48,33 +48,25 @@ if "submitted" not in st.session_state:
 if "saving" not in st.session_state:
     st.session_state.saving = False
 if "weights" not in st.session_state:
-    st.session_state.weights = {c: 0.0 for c in RGI_COMPONENTS}  # arranca en 0
+    st.session_state.weights = {c: 0.0 for c in RGI_COMPONENTS}
 
 # ─────────────── HELPERS ───────────────
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 def ensure_headers(sh):
-    headers = [
-        "timestamp","email","session_id",
-        "Legal Framework","Independence & Accountability","Tariff Methodology","Participation & Transparency",
-        "Legal Mandate","Clarity of Roles & Objectives","Open Access to Information","Transparency"
-    ]
+    headers = ["timestamp","email","session_id"] + RGI_COMPONENTS
     vals = sh.get_all_values()
-    if not vals:  # hoja vacía
+    if not vals:
         sh.append_row(headers)
 
 @st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
-    """Carga CSV, quita BOM/espacios, crea columna clave __key__."""
     try:
         df = pd.read_csv(path, encoding="utf-8-sig")
-        # strip headers
         df.columns = df.columns.astype(str).str.strip()
-        # clave por email (o name como fallback)
         key_col = "email" if "email" in df.columns else ("name" if "name" in df.columns else None)
         if key_col is None:
             return pd.DataFrame()
-        # strip valores clave
         df[key_col] = df[key_col].astype(str).str.strip()
         df["__key__"] = df[key_col].str.casefold()
         return df
@@ -82,26 +74,18 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 def map_defaults_row_to_dict(row: pd.Series) -> dict:
-    """
-    Acepta dos esquemas en el CSV para los pesos:
-      - 'w::<Componente>'
-      - '<Componente>' (exacto)
-    Convierte a float con coerción segura.
-    """
     out = {}
     for comp in RGI_COMPONENTS:
         val = None
-        c1 = f"w::{comp}"
-        c2 = comp
+        c1, c2 = f"w::{comp}", comp
         if c1 in row and pd.notna(row[c1]):
             val = row[c1]
         elif c2 in row and pd.notna(row[c2]):
             val = row[c2]
-        # coerción segura (acepta "20", "20.0", "20%", etc.)
         if isinstance(val, str):
             val = val.replace("%", "").strip()
         try:
-            out[comp] = float(val) if val is not None and val != "" else 0.0
+            out[comp] = float(val) if val not in (None, "") else 0.0
         except Exception:
             out[comp] = 0.0
     return out
@@ -110,15 +94,12 @@ def load_defaults_for_key(df: pd.DataFrame, key: str) -> dict | None:
     if df.empty:
         return None
     k = (key or "").strip().casefold()
-    if not k:
-        return None
     row = df.loc[df["__key__"] == k]
     if row.empty:
         return None
     return map_defaults_row_to_dict(row.iloc[0])
 
 def autoload_defaults_by_email(email: str):
-    """Intenta precargar defaults al pasar a Stage 2."""
     df = load_defaults_csv(DEFAULTS_CSV_PATH)
     defaults = load_defaults_for_key(df, email)
     if defaults:
@@ -128,7 +109,6 @@ def autoload_defaults_by_email(email: str):
         st.info("No defaults found for this email. You can allocate manually.")
 
 def save_to_sheet(email: str, weights: dict, session_id: str):
-    # Requiere en st.secrets: gs_email, gs_key, sheet_id
     creds = {
         "type": "service_account",
         "client_email": st.secrets.gs_email,
@@ -138,35 +118,24 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     client = gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
     sh = client.open_by_key(st.secrets.sheet_id).sheet1
-
     ensure_headers(sh)
-    row = [
-        dt.datetime.now().isoformat(),
-        email,
-        session_id
-    ] + [weights[c] for c in RGI_COMPONENTS]
+    row = [dt.datetime.now().isoformat(), email, session_id] + [weights[c] for c in RGI_COMPONENTS]
     sh.append_row(row)
 
 # ─────────────── UI ───────────────
 st.title("RGI – Budget Allocation")
 
-# ====== STAGE 1: EMAIL ONLY ======
+# ====== STAGE 1: EMAIL ======
 if st.session_state.stage == 1:
     st.subheader("Step 1 · Your email")
     email = st.text_input("Email", placeholder="name@example.org", value=st.session_state.email)
 
-    cols = st.columns([1,1,4])
-    with cols[0]:
-        if st.button("Reload defaults file"):
-            load_defaults_csv.clear()   # limpiar caché si actualizaste el CSV
-            st.success("Defaults file reloaded.")
-    with cols[1]:
-        can_continue = bool(EMAIL_RE.match(email))
-        if st.button("Continue", disabled=not can_continue):
-            st.session_state.email = email.strip()
-            st.session_state.stage = 2
-            autoload_defaults_by_email(st.session_state.email)
-            st.rerun()
+    can_continue = bool(EMAIL_RE.match(email))
+    if st.button("Continue", disabled=not can_continue):
+        st.session_state.email = email.strip()
+        st.session_state.stage = 2
+        autoload_defaults_by_email(st.session_state.email)
+        st.rerun()
 
     st.caption("We use your email to match initial weights (if available) and to record your submission.")
 
@@ -176,7 +145,7 @@ if st.session_state.stage == 2:
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     st.subheader("Step 2 · Allocate a total of 100 points")
-    st.caption("Distribute points across the 8 RGI components. No auto-normalization. Submit is enabled only if the total equals exactly 100.")
+    st.caption("Distribute points across the 8 RGI components. Submit is enabled only if the total equals exactly 100.")
 
     new_vals = {}
     for comp in RGI_COMPONENTS:
