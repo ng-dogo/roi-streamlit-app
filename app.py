@@ -19,9 +19,6 @@ html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Robot
 .main .block-container{max-width:900px}
 hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
 
-/* Barra 100% apilada */
-.segment-bar{display:flex;height:18px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.15);}
-
 /* Badge de valor: alto contraste para light/dark */
 .badge{
   padding:2px 10px;border-radius:999px;
@@ -29,8 +26,19 @@ hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
   font-size:12px; display:inline-block; min-width:46px; text-align:center;
 }
 
-/* Ajustes tipográficos */
-.label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Lista ordenada compacta */
+.ol-compact {counter-reset:item; margin:0; padding-left:0;}
+.ol-compact li{
+  list-style:none; counter-increment:item;
+  display:flex; justify-content:space-between; align-items:center;
+  padding:.25rem .5rem; border-bottom:1px dashed #e9e9e9;
+}
+.ol-compact li::before{
+  content: counter(item) ".";
+  margin-right:.5rem; color:#444; width:1.5rem; text-align:right;
+}
+.comp-name{font-weight:600; color:#111;}
+.comp-pct{font-variant-numeric:tabular-nums;}
 </style>
 """
 st.markdown(MINI_CSS, unsafe_allow_html=True)
@@ -48,12 +56,6 @@ RGI_COMPONENTS = [
 ]
 DEFAULTS_CSV_PATH = "rgi_defaults.csv"
 REQUIRE_TOTAL_100 = True
-
-# Colores sólidos (8) para la barra apilada (alto contraste)
-SEGMENT_COLORS = [
-    "#0B8F6A", "#137F88", "#2D6CC2", "#7A5BE3",
-    "#C04ECF", "#D74D7F", "#E56E3E", "#B7A931"
-]
 
 # ─────────────── STATE ───────────────
 if "session_id" not in st.session_state:
@@ -185,7 +187,7 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
 def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
     """
     Ajusta SOLO los componentes posteriores (de atrás hacia adelante) para cerrar en 100.
-    Si la cola no alcanza, se capa el nuevo valor.
+    Si la cola no alcanza, se capa el nuevo valor. Lo ya configurado no se mueve.
     """
     comps = RGI_COMPONENTS
     w = weights.copy()
@@ -233,7 +235,7 @@ def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
             if remaining <= 0:
                 break
 
-    # Sanitizar
+    # Sanitizar y cerrar exacto en 100
     for c in comps:
         w[c] = max(0, min(100, int(w[c])))
     s = sum(w.values())
@@ -303,23 +305,6 @@ if st.session_state.stage == 2:
         if st.button("Equalize all"):
             equalize_all()
 
-    # Barra apilada 100% (visual, alto contraste)
-    total_now = sum(st.session_state.weights.values())
-    widths = [max(0, st.session_state.weights[c]) for c in RGI_COMPONENTS]
-    widths = [w if total_now > 0 else 0 for w in widths]
-    bar_html = ['<div class="segment-bar">']
-    for i, c in enumerate(RGI_COMPONENTS):
-        pct = 0 if total_now == 0 else (widths[i] / total_now * 100.0)
-        color = SEGMENT_COLORS[i % len(SEGMENT_COLORS)]
-        bar_html.append(
-            f'<div class="segment" title="{c}: {st.session_state.weights[c]}%" '
-            f'style="width:{pct}%; background:{color};"></div>'
-        )
-    bar_html.append("</div>")
-    st.markdown("".join(bar_html), unsafe_allow_html=True)
-
-    st.write("")
-
     # Sliders (0..100, enteros)
     new_ui_vals = {}
     for comp in RGI_COMPONENTS:
@@ -335,10 +320,22 @@ if st.session_state.stage == 2:
         reb = trailing_rebalance(st.session_state.last_weights, idx, int(new_ui_vals[RGI_COMPONENTS[idx]]))
         st.session_state.weights = reb
         st.session_state.last_weights = reb.copy()
-        st.rerun()  # 🔁 refresca sliders/barras inmediatamente
+        st.rerun()
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.write(f"**Total allocated:** {sum(st.session_state.weights.values())} / 100")
+
+    # Vista “Distribution overview” ordenada (texto claro, sin colores)
+    st.markdown("### Distribution overview")
+    sorted_items = sorted(st.session_state.weights.items(), key=lambda kv: kv[1], reverse=True)
+    items_html = ['<ol class="ol-compact">']
+    for name, pct in sorted_items:
+        items_html.append(
+            f'<li><span class="comp-name">{name}</span>'
+            f'<span class="comp-pct"><span class="badge">{pct}%</span></span></li>'
+        )
+    items_html.append("</ol>")
+    st.markdown("".join(items_html), unsafe_allow_html=True)
 
     # Submit
     disabled_submit = (
