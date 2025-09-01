@@ -10,7 +10,7 @@ import gspread
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layout="centered")
 
-# Dark-mode friendly minimal CSS (no hardcoded light backgrounds)
+# Dark-mode friendly CSS + hide number_input spinners
 CSS = """
 <style>
 html, body, [class*="css"] { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -20,15 +20,18 @@ html, body, [class*="css"] { font-family: system-ui, -apple-system, Segoe UI, Ro
 hr { border: none; border-top: 1px solid rgba(128,128,128,.2); margin: 1rem 0; }
 .stButton>button { border-radius: 8px; padding: .25rem .55rem; }
 .center-cell { display:flex; align-items:center; justify-content:center; }
-.value-box { min-width: 4.2rem; text-align:center; padding:.28rem .55rem; border-radius:8px; font-variant-numeric: tabular-nums;
-             background: rgba(127,127,127,.15); font-weight: 600; }
+.value-input .stNumberInput input { text-align: center; font-weight: 600; }
+.value-input .stNumberInput { width: 8rem; }
+.value-input input[type=number]::-webkit-outer-spin-button,
+.value-input input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.value-input input[type=number] { -moz-appearance: textfield; } /* Firefox */
 .badge { display:inline-block; padding:.18rem .55rem; border-radius:999px; background: rgba(127,127,127,.15); }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ─────────────── PARAMS ───────────────
-CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # CSV with columns: component,weight
+CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # expects columns: component,weight
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # ─────────────── STATE ───────────────
@@ -188,7 +191,7 @@ if email != st.session_state.email:
 st.write("---")
 st.subheader("Allocation")
 
-# Rows: −10 · −1 · [value] · +1 · +10 (single value shown in the center)
+# Rows: −10 · −1 · [single number_input] · +1 · +10
 for comp in st.session_state.components:
     pts = int(st.session_state.points[comp])
 
@@ -201,12 +204,13 @@ for comp in st.session_state.components:
         st.button("−1",  key=f"m1_{comp}",  on_click=bump, args=(comp,  -1))
 
     with c3:
-        # Single source of truth: number_input (no duplicate display)
-        new_val = st.number_input(" ", key=f"num_{comp}", value=pts, min_value=0, max_value=100, step=1, label_visibility="collapsed")
-        if new_val != pts:
-            set_exact(comp, int(new_val))
-            pts = int(st.session_state.points[comp])
-        st.markdown(f"<div class='center-cell'><div class='value-box'>{pts}</div></div>", unsafe_allow_html=True)
+        with st.container():
+            st.markdown("<div class='center-cell value-input'>", unsafe_allow_html=True)
+            new_val = st.number_input(" ", key=f"num_{comp}", value=pts, min_value=0, max_value=100, step=1,
+                                      label_visibility="collapsed")
+            st.markdown("</div>", unsafe_allow_html=True)
+            if new_val != pts:
+                set_exact(comp, int(new_val))
 
     with c4:
         st.button("+1",  key=f"p1_{comp}",  on_click=bump, args=(comp,  +1))
@@ -230,7 +234,6 @@ with colB:
         for c, v in zip(st.session_state.components, arr.tolist()):
             st.session_state.points[c] = int(v)
         df_view = df_from_state()
-        total_now = int(df_view["Points"].sum())
 
 st.bar_chart(df_view.set_index("Component")["Points"])
 
