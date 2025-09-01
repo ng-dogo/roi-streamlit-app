@@ -28,7 +28,7 @@ hr { border: none; border-top: 1px solid rgba(128,128,128,.2); margin: 1rem 0; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ─────────────── PARAMS ───────────────
-CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "defaults.csv")  # CSV with columns: component,weight
+CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # CSV with columns: component,weight
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # ─────────────── STATE ───────────────
