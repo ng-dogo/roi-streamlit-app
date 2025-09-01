@@ -2,9 +2,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re, uuid, datetime as dt
+import re, uuid, datetime as dt, time
 from google.oauth2.service_account import Credentials
 import gspread
+from gspread.exceptions import APIError  # para manejar errores de cuota/servidor
 
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layout="centered")
@@ -108,19 +109,48 @@ def autoload_defaults_by_email(email: str):
     else:
         st.info("No defaults found for this email. You can allocate manually.")
 
-def save_to_sheet(email: str, weights: dict, session_id: str):
+@st.cache_resource
+def get_sheet():
     creds = {
         "type": "service_account",
         "client_email": st.secrets.gs_email,
         "private_key": st.secrets.gs_key.replace("\\n", "\n"),
-        "token_uri": "https://oauth2.googleapis.com/token"
+        "token_uri": "https://oauth2.googleapis.com/token",
     }
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     client = gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
-    sh = client.open_by_key(st.secrets.sheet_id).sheet1
+    return client.open_by_key(st.secrets.sheet_id).sheet1
+
+def save_to_sheet(email: str, weights: dict, session_id: str):
+    sh = get_sheet()
     ensure_headers(sh)
     row = [dt.datetime.now().isoformat(), email, session_id] + [weights[c] for c in RGI_COMPONENTS]
-    sh.append_row(row)
+
+    # Reintentos con backoff exponencial ante cuota/errores transitorios
+    max_tries = 5
+    delay = 0.5
+    for attempt in range(1, max_tries + 1):
+        try:
+            sh.append_row(row)
+            return
+        except APIError as e:
+            # Intentar detectar códigos 429/5xx
+            status = None
+            try:
+                status = e.response.status_code  # gspread >= 6
+            except Exception:
+                try:
+                    status = getattr(getattr(e, "response", None), "status", None)
+                except Exception:
+                    status = None
+            if str(status) in {"429", "500", "502", "503", "504"} and attempt < max_tries:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise
+        except Exception:
+            # Otro error no transitorio
+            raise
 
 # ─────────────── UI ───────────────
 st.title("RGI – Budget Allocation")
@@ -166,13 +196,16 @@ if st.session_state.stage == 2:
         not st.session_state.email or
         (REQUIRE_TOTAL_100 and abs(total - 100.0) > 1e-9)
     )
+
+    # 🔒 Anti multi-submit: bloquear al primer click; revertir si hay error
     if st.button("Submit", disabled=disabled_submit):
+        st.session_state.submitted = True
         st.session_state.saving = True
         try:
             save_to_sheet(st.session_state.email, st.session_state.weights, st.session_state.session_id)
-            st.session_state.submitted = True
             st.success("Saved. Thank you.")
         except Exception as e:
+            st.session_state.submitted = False  # liberar si falló
             st.error(f"Error saving your response. {e}")
         finally:
             st.session_state.saving = False
