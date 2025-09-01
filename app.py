@@ -2,31 +2,29 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import gspread, datetime as dt, uuid
+import uuid, datetime as dt
 from google.oauth2.service_account import Credentials
+import gspread
 
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layout="centered")
 
-st.markdown("""
+MINI_CSS = """
 <style>
 :root{ --primary:#02593B; }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
-/* sliders & number inputs */
-div[data-baseweb="slider"] > div > div{background:var(--primary);}
-div[data-baseweb="slider"] > div > div > div{background:var(--primary);}
-.stNumberInput input {text-align:right;}
-/* buttons */
-.stButton>button{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:.5rem 1rem}
+.stButton>button{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:.5rem 1rem}
 .stButton>button:disabled{background:#ccc;color:#666}
-/* container */
-.main .block-container{max-width:900px}
+.main .block-container{max-width:820px}
+hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
+.label-small{color:#666;font-size:0.9rem}
 </style>
-""", unsafe_allow_html=True)
+"""
+st.markdown(MINI_CSS, unsafe_allow_html=True)
 
-# ─────────────── RGI COMPONENTS (8) ───────────────
+# ─────────────── PARAMS (editables) ───────────────
+# Usá los nombres EXACTOS que quieras mostrar/registar
 RGI_COMPONENTS = [
-    # poné aquí los nombres EXACTOS que usarás en la presentación/reportes
     "Legal Framework",
     "Independence & Accountability",
     "Tariff Methodology",
@@ -36,6 +34,9 @@ RGI_COMPONENTS = [
     "Open Access to Information",
     "Transparency",
 ]
+
+DEFAULTS_CSV_PATH = "rgi_defaults.csv"  # subilo a tu repo
+REQUIRE_TOTAL_100 = True                # sólo habilita submit si suman 100
 
 # ─────────────── STATE ───────────────
 if "session_id" not in st.session_state:
@@ -47,53 +48,56 @@ if "saving" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = {"first":"","last":"","entity":"","country":""}
 if "weights" not in st.session_state:
-    # default: iguales
-    st.session_state.weights = {c: round(100/len(RGI_COMPONENTS), 2) for c in RGI_COMPONENTS}
+    st.session_state.weights = {c: 0.0 for c in RGI_COMPONENTS}  # arranca en 0
 
 # ─────────────── HELPERS ───────────────
 @st.cache_data
-def load_defaults_csv(path: str = "rgi_defaults.csv") -> pd.DataFrame:
-    # Espera columnas: name, w::Legal Framework, w::Independence & Accountability, ...
+def load_defaults_csv(path: str) -> pd.DataFrame:
     try:
         df = pd.read_csv(path)
-        # estandarizo nombre
+        # Normalizo nombre para el match
+        if "name" not in df.columns:
+            return pd.DataFrame()
         df["__name_norm__"] = df["name"].astype(str).str.strip().str.casefold()
         return df
     except Exception:
         return pd.DataFrame()
 
-def get_defaults_for_name(df: pd.DataFrame, name: str) -> dict | None:
-    if df.empty or not name.strip():
-        return None
-    row = df.loc[df["__name_norm__"] == name.strip().casefold()]
-    if row.empty:
-        return None
-    r = row.iloc[0].to_dict()
-    # columnas esperadas: w::<COMPONENT>
+def map_defaults_row_to_dict(row: pd.Series) -> dict:
+    """
+    Acepta dos formatos de columnas en el CSV:
+      1) 'w::<Componente>'
+      2) '<Componente>' (exacto)
+    Devuelve dict {componente: valor_float}
+    """
     out = {}
     for comp in RGI_COMPONENTS:
-        col = f"w::{comp}"
-        if col in r and pd.notna(r[col]):
-            out[comp] = float(r[col])
-    # normalizo a 100
-    if out:
-        s = sum(v for v in out.values() if v is not None)
-        if s > 0:
-            out = {k: round(v*100/s, 2) for k,v in out.items()}
-        # completa faltantes con 0
-        for comp in RGI_COMPONENTS:
-            out.setdefault(comp, 0.0)
-        return out
-    return None
+        val = None
+        col1 = f"w::{comp}"
+        col2 = comp
+        if col1 in row and pd.notna(row[col1]):
+            val = row[col1]
+        elif col2 in row and pd.notna(row[col2]):
+            val = row[col2]
+        if val is not None:
+            try:
+                out[comp] = float(val)
+            except Exception:
+                out[comp] = 0.0
+        else:
+            out[comp] = 0.0
+    return out
 
-def normalize_to_100(d: dict[str,float]) -> dict[str,float]:
-    vals = np.array([max(0.0, float(d[k])) for k in RGI_COMPONENTS], dtype=float)
-    s = vals.sum()
-    if s <= 0:
-        vals[:] = 100.0/len(vals)
-    else:
-        vals = vals * (100.0/s)
-    return {k: round(v, 2) for k, v in zip(RGI_COMPONENTS, vals)}
+def load_defaults_for_name(df: pd.DataFrame, first: str, last: str) -> dict | None:
+    if df.empty:
+        return None
+    target = f"{first} {last}".strip().casefold()
+    if not target.strip():
+        return None
+    row = df.loc[df["__name_norm__"] == target]
+    if row.empty:
+        return None
+    return map_defaults_row_to_dict(row.iloc[0])
 
 def save_to_sheet(user, weights: dict, session_id: str):
     # Requiere en st.secrets: gs_email, gs_key, sheet_id
@@ -111,24 +115,14 @@ def save_to_sheet(user, weights: dict, session_id: str):
         dt.datetime.now().isoformat(),
         user["first"], user["last"], user["entity"], user["country"],
         session_id
-    ]
-    # agrego los 8 pesos en el mismo orden fijo
-    row += [weights[c] for c in RGI_COMPONENTS]
+    ] + [weights[c] for c in RGI_COMPONENTS]
+
     sh.append_row(row)
 
-# ─────────────── HEADER ───────────────
-st.image("ad_hoc_logo.png", width=140)
-st.title("Regulatory Governance Index (RGI) – Budget Allocation")
+# ─────────────── UI ───────────────
+st.title("RGI – Budget Allocation")
 
-defaults_df = load_defaults_csv()  # rgi_defaults.csv junto al app.py
-
-with st.expander("What is this?", expanded=False):
-    st.markdown("""
-Distribute **100%** across the **8 RGI components** according to their relative importance.
-If we have your **Mentimeter**-based weights, we'll pre-fill them when you enter your name.
-""")
-
-# ─────────────── USER INFO ───────────────
+# Datos del usuario
 st.subheader("Your details")
 c1, c2 = st.columns(2)
 with c1:
@@ -139,101 +133,59 @@ with c2:
     country = st.text_input("Country", value=st.session_state.user["country"])
 
 st.session_state.user = {
-    "first": first.strip(), "last": last.strip(),
-    "entity": entity.strip(), "country": country.strip()
+    "first": first.strip(),
+    "last": last.strip(),
+    "entity": entity.strip(),
+    "country": country.strip()
 }
 
 # Botón para precargar defaults desde CSV por nombre completo
-prefill_col = st.columns([1,1,3])[0]
-if prefill_col.button("🔎 Load my defaults (by name)"):
-    name_join = f"{st.session_state.user['first']} {st.session_state.user['last']}".strip()
-    found = get_defaults_for_name(defaults_df, name_join)
-    if found:
-        st.session_state.weights = found
-        st.success("Defaults loaded from CSV.")
+defaults_df = load_defaults_csv(DEFAULTS_CSV_PATH)
+prefill = st.button("Load my Mentimeter-based defaults")
+
+if prefill:
+    defaults = load_defaults_for_name(defaults_df, st.session_state.user["first"], st.session_state.user["last"])
+    if defaults:
+        st.session_state.weights = {k: round(v, 2) for k, v in defaults.items()}
+        st.success("Defaults loaded.")
     else:
-        st.warning("No defaults found for that name. Using equal shares.")
+        st.warning("No defaults found for that name. You can fill manually.")
 
-st.markdown("---")
+st.markdown("<hr/>", unsafe_allow_html=True)
 
-# ─────────────── BUDGET ALLOCATION ───────────────
-st.subheader("Allocate **100%** across components")
+# Inputs minimalistas (sin gráficos)
+st.subheader("Allocate a total of 100 points")
+st.caption("Distribute points across the 8 RGI components. No auto-normalization. The Submit button is enabled only if the total equals exactly 100.")
 
-# número de columnas (4 filas x 2 columnas → 8 inputs prolijos)
-rows = [RGI_COMPONENTS[i:i+2] for i in range(0, len(RGI_COMPONENTS), 2)]
 new_vals = {}
+for comp in RGI_COMPONENTS:
+    new_vals[comp] = st.number_input(
+        comp, min_value=0.0, max_value=100.0, step=1.0,
+        value=float(st.session_state.weights.get(comp, 0.0)),
+        key=f"num_{comp}"
+    )
 
-for row in rows:
-    cA, cB = st.columns(2)
-    with cA:
-        comp = row[0]
-        new_vals[comp] = st.number_input(
-            f"{comp}", min_value=0.0, max_value=100.0, step=1.0,
-            value=float(st.session_state.weights.get(comp, 0.0)), key=f"num_{comp}"
-        )
-    if len(row) > 1:
-        with cB:
-            comp = row[1]
-            new_vals[comp] = st.number_input(
-                f"{comp}", min_value=0.0, max_value=100.0, step=1.0,
-                value=float(st.session_state.weights.get(comp, 0.0)), key=f"num_{comp}"
-            )
+# Guardamos en estado y mostramos total
+st.session_state.weights = {k: float(v) for k, v in new_vals.items()}
+total = float(np.sum(list(st.session_state.weights.values())))
 
-# normalizo y muestro resumen
-normalized = normalize_to_100(new_vals)
-st.session_state.weights = normalized
+st.markdown("<hr/>", unsafe_allow_html=True)
+st.write(f"**Total allocated:** {total:.0f} / 100")
 
-st.markdown("#### Total allocated")
-total = sum(normalized.values())
-st.progress(min(int(total), 100))
-st.caption(f"Sum after normalization: **{total:.2f}%** (always kept at 100%)")
-
-# tabla + gráfico
-df = (pd.DataFrame({"Component": list(normalized.keys()), "Weight (%)": list(normalized.values())})
-        .sort_values("Weight (%)", ascending=False))
-st.markdown("### 📊 Distribution")
-st.bar_chart(df.set_index("Component"))
-
-st.markdown("### 🏁 Priority ranking")
-for i, r in enumerate(df.itertuples(index=False), 1):
-    st.write(f"**{i}. {r.Component} – {r._2:.2f}%**")
-
-st.markdown("---")
-
-# ─────────────── PRESETS ───────────────
-with st.expander("⚡ Quick presets", expanded=False):
-    col_a, col_b, col_c = st.columns(3)
-    if col_a.button("Equal (12.5% each)"):
-        st.session_state.weights = {c: round(100/len(RGI_COMPONENTS),2) for c in RGI_COMPONENTS}
-        st.rerun()
-    if col_b.button("Emphasize Governance (LF + I&A)"):
-        tmp = {c: 5.0 for c in RGI_COMPONENTS}
-        tmp["Legal Framework"] = 30.0
-        tmp["Independence & Accountability"] = 30.0
-        st.session_state.weights = normalize_to_100(tmp)
-        st.rerun()
-    if col_c.button("Emphasize Transparency"):
-        tmp = {c: 7.0 for c in RGI_COMPONENTS}
-        for c in ["Open Access to Information","Transparency","Participation & Transparency"]:
-            if c in tmp: tmp[c] = tmp[c] + 15.0
-        st.session_state.weights = normalize_to_100(tmp)
-        st.rerun()
-
-# ─────────────── SUBMIT ───────────────
-st.markdown("---")
+# Submit
 disabled_submit = (
     st.session_state.saving or st.session_state.submitted or
-    not all(st.session_state.user.values())
+    not all(st.session_state.user.values()) or
+    (REQUIRE_TOTAL_100 and abs(total - 100.0) > 1e-9)
 )
-if st.button("📤 Submit my allocation", disabled=disabled_submit):
+if st.button("Submit", disabled=disabled_submit):
     st.session_state.saving = True
     try:
         save_to_sheet(st.session_state.user, st.session_state.weights, st.session_state.session_id)
         st.session_state.submitted = True
-        st.success("✅ Thank you! Your submission has been recorded.")
-        st.balloons()
+        st.success("Saved. Thank you.")
     except Exception as e:
-        st.error(f"⚠️ There was an error saving your response. {e}")
+        st.error(f"Error saving your response. {e}")
     finally:
         st.session_state.saving = False
 
