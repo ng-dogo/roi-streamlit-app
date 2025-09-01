@@ -5,7 +5,7 @@ import numpy as np
 import re, uuid, datetime as dt, time
 from google.oauth2.service_account import Credentials
 import gspread
-from gspread.exceptions import APIError  # para manejar errores de cuota/servidor
+from gspread.exceptions import APIError
 
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layout="centered")
@@ -19,7 +19,7 @@ html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Robot
 .main .block-container{max-width:900px}
 hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
 
-/* Badge de valor: alto contraste para light/dark */
+/* Badge alto contraste */
 .badge{
   padding:2px 10px;border-radius:999px;
   background:#f8f8f8;color:#111;border:1px solid rgba(0,0,0,.15);
@@ -72,16 +72,13 @@ if "weights" not in st.session_state:
     st.session_state.weights = {c: 0 for c in RGI_COMPONENTS}  # enteros 0..100
 if "last_weights" not in st.session_state:
     st.session_state.last_weights = st.session_state.weights.copy()
-if "_prog_update" not in st.session_state:
-    st.session_state._prog_update = False  # bandera anti-bucle tras sync programático
 
 # ─────────────── HELPERS (CSV / Defaults) ───────────────
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 def ensure_headers(sh):
     headers = ["timestamp","email","session_id"] + RGI_COMPONENTS
-    vals = sh.get_all_values()
-    if not vals:
+    if not sh.get_all_values():
         sh.append_row(headers)
 
 @st.cache_data(ttl=300)
@@ -117,27 +114,28 @@ def load_defaults_for_key(df: pd.DataFrame, key: str) -> dict | None:
     if row.empty: return None
     return map_defaults_row_to_dict(row.iloc[0])
 
+def normalize_to_100(w: dict) -> dict:
+    s = sum(w.values())
+    if s <= 0:
+        w2 = {k: (100 // len(RGI_COMPONENTS)) for k in RGI_COMPONENTS}
+        w2[RGI_COMPONENTS[0]] += 100 - sum(w2.values())
+        return w2
+    w2 = {k: int(round(v * 100.0 / s)) for k, v in w.items()}
+    residue = 100 - sum(w2.values())
+    if residue != 0:
+        ordered = sorted(RGI_COMPONENTS, key=lambda c: -w2[c])
+        for i in range(abs(residue)):
+            w2[ordered[i % len(ordered)]] += 1 if residue > 0 else -1
+    return w2
+
 def autoload_defaults_by_email(email: str):
     df = load_defaults_csv(DEFAULTS_CSV_PATH)
     defaults = load_defaults_for_key(df, email)
     if defaults:
-        s = sum(defaults.values())
-        if s <= 0:
-            defaults = {k: (100 // len(RGI_COMPONENTS)) for k in RGI_COMPONENTS}
-            defaults[RGI_COMPONENTS[0]] += 100 - sum(defaults.values())
-        else:
-            defaults = {k: int(round(v * 100.0 / s)) for k, v in defaults.items()}
-            residue = 100 - sum(defaults.values())
-            if residue != 0:
-                ordered = sorted(RGI_COMPONENTS, key=lambda c: -defaults[c])
-                for i in range(abs(residue)):
-                    defaults[ordered[i % len(ordered)]] += 1 if residue > 0 else -1
+        defaults = normalize_to_100(defaults)
         st.session_state.weights = defaults
         st.session_state.last_weights = defaults.copy()
-        # sync widgets
-        for c in RGI_COMPONENTS[:-1]:
-            st.session_state[f"sl_{c}"] = defaults[c]
-        st.session_state._prog_update = True
+        st.success("Defaults loaded from CSV.")
         st.rerun()
     else:
         st.info("No defaults found for this email. You can allocate manually.")
@@ -178,10 +176,8 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
 # ─────────────── LÓGICA DE TOPES Y REBALANCE ───────────────
 def slider_bounds_by_trailing(weights: dict) -> dict:
     """
-    Para cada componente i (excepto el último), calcula:
-      - max_i = w[i] + suma(tail)   (lo que se puede quitar a los de abajo)
-      - min_i = w[i] - suma(100 - w_tail) (lo que se puede poner a los de abajo)
-    Clipa 0..100. El último se auto-calcula (sin slider).
+    Para cada componente i (excepto el último), calcula los topes que respetan
+    lo que puede ceder/sumar la 'cola'. El último es lectura (min=max=valor).
     """
     comps = RGI_COMPONENTS
     n = len(comps)
@@ -189,9 +185,7 @@ def slider_bounds_by_trailing(weights: dict) -> dict:
     bounds = {}
     for i, c in enumerate(comps):
         if i == n - 1:
-            # último = lectura auto (sin slider)
-            bounds[c] = (w[c], w[c])
-            continue
+            bounds[c] = (w[c], w[c]); continue
         tail = comps[i+1:]
         reducible = sum(w[t] for t in tail)
         addable = sum(100 - w[t] for t in tail)
@@ -202,8 +196,7 @@ def slider_bounds_by_trailing(weights: dict) -> dict:
 
 def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
     """
-    Ajusta SOLO la cola (de atrás hacia adelante) para cerrar en 100.
-    Si la cola no alcanza, capa el nuevo valor.
+    Ajusta SOLO la cola para cerrar en 100. Si la cola no alcanza, capa el nuevo valor.
     """
     comps = RGI_COMPONENTS
     w = weights.copy()
@@ -262,18 +255,13 @@ def detect_changed_component(new_ui_vals: dict, old: dict) -> int | None:
 def reset_to_defaults():
     df = load_defaults_csv(DEFAULTS_CSV_PATH)
     defaults = load_defaults_for_key(df, st.session_state.email)
-    if defaults:
-        w = defaults
+    if defaults: w = normalize_to_100(defaults)
     else:
         equal = 100 // len(RGI_COMPONENTS)
         w = {c: equal for c in RGI_COMPONENTS}
         w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
     st.session_state.weights = w
     st.session_state.last_weights = w.copy()
-    # sync sliders
-    for c in RGI_COMPONENTS[:-1]:
-        st.session_state[f"sl_{c}"] = w[c]
-    st.session_state._prog_update = True
     st.rerun()
 
 def equalize_all():
@@ -282,9 +270,6 @@ def equalize_all():
     w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
     st.session_state.weights = w
     st.session_state.last_weights = w.copy()
-    for c in RGI_COMPONENTS[:-1]:
-        st.session_state[f"sl_{c}"] = w[c]
-    st.session_state._prog_update = True
     st.rerun()
 
 # ─────────────── UI ───────────────
@@ -300,8 +285,7 @@ if st.session_state.stage == 1:
         st.session_state.email = email.strip()
         st.session_state.stage = 2
         autoload_defaults_by_email(st.session_state.email)
-        # autoload_defaults hace rerun; si no hay defaults:
-        if st.session_state.stage == 2: st.rerun()
+        st.rerun()
 
     st.caption("We use your email to match initial weights (if available) and to record your submission.")
 
@@ -320,7 +304,7 @@ if st.session_state.stage == 2:
     with c2:
         if st.button("Equalize all"): equalize_all()
 
-    # TOPES dinámicos según el estado actual (último es lectura)
+    # TOPES dinámicos (en base al estado actual)
     bounds = slider_bounds_by_trailing(st.session_state.last_weights)
 
     # Sliders para todos menos el último
@@ -329,14 +313,15 @@ if st.session_state.stage == 2:
         cols = st.columns([6, 2])
         if i < len(RGI_COMPONENTS) - 1:
             mn, mx = bounds[comp]
+            current_val = int(st.session_state.weights.get(comp, 0))
+            # asegurar que el value esté dentro de [mn, mx] para evitar errores
+            current_val = max(mn, min(mx, current_val))
             with cols[0]:
                 new_ui_vals[comp] = st.slider(
-                    comp, mn, mx,
-                    int(st.session_state.weights.get(comp, 0)),
-                    key=f"sl_{comp}"
+                    comp, mn, mx, current_val, key=f"sl_{comp}"
                 )
             with cols[1]:
-                st.write(f"<span class='badge'>{st.session_state.weights.get(comp, 0)}%</span>", unsafe_allow_html=True)
+                st.write(f"<span class='badge'>{current_val}%</span>", unsafe_allow_html=True)
         else:
             # Último: auto, sin slider (lectura)
             with cols[0]:
@@ -344,26 +329,18 @@ if st.session_state.stage == 2:
             with cols[1]:
                 st.write(f"<span class='badge'>{st.session_state.weights.get(comp, 0)}%</span>", unsafe_allow_html=True)
 
-    # Evitar bucle tras un update programático
-    if st.session_state._prog_update:
-        st.session_state._prog_update = False
-    else:
-        # Detectar cambio y aplicar rebalance de cola
-        idx = detect_changed_component(new_ui_vals, st.session_state.last_weights)
-        if idx is not None:
-            reb = trailing_rebalance(st.session_state.last_weights, idx, int(new_ui_vals[RGI_COMPONENTS[idx]]))
-            st.session_state.weights = reb
-            st.session_state.last_weights = reb.copy()
-            # Sync widgets (para que no quede un slider en un valor imposible)
-            for c in RGI_COMPONENTS[:-1]:
-                st.session_state[f"sl_{c}"] = reb[c]
-            st.session_state._prog_update = True
-            st.rerun()
+    # Detectar cambio y aplicar rebalance de cola → refrescar UI al instante
+    idx = detect_changed_component(new_ui_vals, st.session_state.last_weights)
+    if idx is not None:
+        reb = trailing_rebalance(st.session_state.last_weights, idx, int(new_ui_vals[RGI_COMPONENTS[idx]]))
+        st.session_state.weights = reb
+        st.session_state.last_weights = reb.copy()
+        st.rerun()
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.write(f"**Total allocated:** {sum(st.session_state.weights.values())} / 100")
 
-    # Vista “Distribution overview” ordenada (texto claro)
+    # Overview textual ordenado
     st.markdown("### Distribution overview")
     sorted_items = sorted(st.session_state.weights.items(), key=lambda kv: kv[1], reverse=True)
     items_html = ['<ol class="ol-compact">']
@@ -381,8 +358,6 @@ if st.session_state.stage == 2:
         not st.session_state.email or
         (REQUIRE_TOTAL_100 and sum(st.session_state.weights.values()) != 100)
     )
-
-    # Anti multi-submit
     if st.button("Submit", disabled=disabled_submit):
         st.session_state.submitted = True
         st.session_state.saving = True
