@@ -1,4 +1,5 @@
-name,w::Legal Framework,w::Independence & Accountability,w::Tariff Methodology,w::Participation & Transparency,w::Legal Mandate,w::Clarity of Roles & Objectives,w::Open Access to Information,w::Transparency
-Nicolas Gallo,20,20,10,10,10,10,10,10
-Ramiro,25,25,10,10,10,10,5,5
-Adorni,30,20,10,10,10,10,5,5
+email,name,Legal Framework,Independence & Accountability,Tariff Methodology,Participation & Transparency,Legal Mandate,Clarity of Roles & Objectives,Open Access to Information,Transparency
+nicolas@example.com,Nicolas,20,15,10,15,10,10,10,10
+martin@example.com,Martin,25,20,15,10,10,10,5,5
+guadalupe@example.com,Guadalupe,15,20,15,15,10,10,10,5
+sebastian@example.com,Sebastian,10,25,15,10,10,10,10,10
