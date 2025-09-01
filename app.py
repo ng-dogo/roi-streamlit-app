@@ -10,25 +10,25 @@ import gspread
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation (BAP)", page_icon="⚡", layout="centered")
 
-# CSS minimalista: NO forzamos colores de fondo, respetamos el tema (incluye modo oscuro)
+# CSS minimalista compatible con modo oscuro (no forzamos fondos claros)
 BASE_CSS = """
 <style>
 html, body, [class*="css"] { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
 .main .block-container { max-width: 980px; }
-.row-wrap { padding: .4rem .6rem; border-radius: 10px; border: 1px solid rgba(128,128,128,.2); margin-bottom: .35rem; }
+.row-wrap { padding: .45rem .6rem; border-radius: 10px; border: 1px solid rgba(128,128,128,.20); margin-bottom: .4rem; }
 .comp { font-weight: 600; }
-.points-pill { display:inline-block; min-width:3.5rem; text-align:center; padding:.25rem .5rem; border-radius: 999px;
+.points-pill { display:inline-block; min-width:3.9rem; text-align:center; padding:.28rem .55rem; border-radius: 999px;
                background: rgba(127,127,127,.15); font-variant-numeric: tabular-nums; }
-.badge { display:inline-block; padding:.15rem .5rem; border-radius:999px; background: rgba(127,127,127,.15); }
+.badge { display:inline-block; padding:.18rem .55rem; border-radius:999px; background: rgba(127,127,127,.15); }
 hr { border: none; border-top: 1px solid rgba(128,128,128,.2); margin: 1rem 0; }
-.small { opacity:.8; font-size:.92rem; }
+.small { opacity:.85; font-size:.92rem; }
+.button-mini > div > button { padding:.25rem .5rem; border-radius:10px; }
 </style>
 """
 st.markdown(BASE_CSS, unsafe_allow_html=True)
 
 # ─────────────── PARAMS ───────────────
-DEFAULTS_CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # CSV con columnas: component,weight
-REQUIRE_TOTAL_100 = True
+DEFAULTS_CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # CSV con 2 columnas: component,weight
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # ─────────────── STATE ───────────────
@@ -38,8 +38,6 @@ if "components" not in st.session_state:
     st.session_state.components = []   # lista ordenada de componentes
 if "points" not in st.session_state:
     st.session_state.points = {}       # dict comp -> int
-if "locks" not in st.session_state:
-    st.session_state.locks = {}        # dict comp -> bool
 if "submitted" not in st.session_state:
     st.session_state.submitted = False
 if "saving" not in st.session_state:
@@ -49,7 +47,7 @@ if "email" not in st.session_state:
 
 # ─────────────── HELPERS ───────────────
 def load_components_and_weights(csv_path: str) -> Tuple[pd.DataFrame, str]:
-    """Lee CSV (component, weight). Devuelve DF con Points enteros que suman ~100 al iniciar y Lock=False."""
+    """Lee CSV (component, weight). Devuelve DF con Points enteros sumando 100."""
     try:
         df = pd.read_csv(csv_path, encoding="utf-8-sig")
     except Exception as e:
@@ -63,6 +61,8 @@ def load_components_and_weights(csv_path: str) -> Tuple[pd.DataFrame, str]:
     df = df[[comp_col, w_col]].rename(columns={comp_col: "Component", w_col: "weight_raw"})
     if df["Component"].isna().any():
         return pd.DataFrame(), "Hay filas sin nombre de componente en el CSV."
+    if len(df) == 0:
+        return pd.DataFrame(), "CSV vacío."
 
     def parse_w(x):
         if pd.isna(x): return 0.0
@@ -73,11 +73,7 @@ def load_components_and_weights(csv_path: str) -> Tuple[pd.DataFrame, str]:
     df["w"] = df["weight_raw"].apply(parse_w).clip(lower=0)
     total = df["w"].sum()
 
-    if len(df) == 0:
-        return pd.DataFrame(), "CSV vacío."
-
     if total <= 0:
-        # todos 0 → reparto igual
         n = len(df)
         ints = np.array([100 // n] * n, dtype=int)
         for i in range(100 - ints.sum()): ints[i] += 1
@@ -93,90 +89,86 @@ def load_components_and_weights(csv_path: str) -> Tuple[pd.DataFrame, str]:
         ints = ints.clip(lower=0).astype(int).values
 
     df["Points"] = ints
-    df["Lock"] = False
-    return df[["Component", "Points", "Lock"]], ""
+    return df[["Component", "Points"]], ""
 
-def set_initial_state_from_df(df: pd.DataFrame):
+def set_initial_state(df: pd.DataFrame):
     st.session_state.components = df["Component"].tolist()
     st.session_state.points = {r.Component: int(r.Points) for r in df.itertuples()}
-    st.session_state.locks  = {r.Component: bool(r.Lock)  for r in df.itertuples()}
 
 def df_from_state() -> pd.DataFrame:
     return pd.DataFrame({
         "Component": st.session_state.components,
         "Points": [int(st.session_state.points[c]) for c in st.session_state.components],
-        "Lock":   [bool(st.session_state.locks[c]) for c in st.session_state.components],
     })
 
-def normalize_to_100():
-    """Ajusta SOLO no bloqueados para que Locks + Libres = 100, corrigiendo ±1 por redondeo."""
-    df = df_from_state()
-    locked_sum = int(df.loc[df["Lock"], "Points"].sum())
-    free_idx = df.index[~df["Lock"]]
-    remaining = max(0, 100 - locked_sum)
+def _round_to_target(values: np.ndarray, target: int) -> np.ndarray:
+    """
+    Redondeo por mayores restos para que 'values' (float) cierre EXACTO en 'target' al pasar a enteros.
+    """
+    base = np.floor(values).astype(int)
+    delta = target - base.sum()
+    if delta != 0:
+        restos = (values - base).astype(float)
+        order = np.argsort(restos)[::-1]  # mayores restos primero
+        for i in range(abs(delta)):
+            idx = order[i % len(order)]
+            base[idx] += 1 if delta > 0 else -1
+    return base
 
-    if len(free_idx) == 0:
-        # si solo hay locks y excede 100, recorta proporcionalmente locks
-        if locked_sum > 100:
-            locks = df.loc[df["Lock"], "Points"].astype(float)
-            if locks.sum() > 0:
-                scaled = locks / locks.sum() * 100
-                ints = np.floor(scaled).astype(int)
-                delta = 100 - ints.sum()
-                residuos = (scaled - ints).values
-                order = np.argsort(residuos)[::-1]
-                for i in range(abs(delta)):
-                    ints.iloc[order[i % len(order)]] += 1 if delta > 0 else -1
-                for comp, v in zip(df.loc[df["Lock"], "Component"], ints.tolist()):
-                    st.session_state.points[comp] = int(v)
+def _rebalance_except(target_comp: str):
+    """
+    Mantiene SIEMPRE total=100 ajustando todos los demás proporcionalmente (no negativos).
+    • Si el comp editado > 100 → se recorta a 100 y el resto a 0.
+    • Si el resto suma 0 y hay que repartir, reparte parejo entre los demás.
+    """
+    comps = st.session_state.components
+    points = st.session_state.points
+    # Clamp del editado a [0,100]
+    points[target_comp] = max(0, min(100, int(points[target_comp])))
+
+    remaining = 100 - points[target_comp]
+    if remaining < 0:
+        points[target_comp] = 100
+        remaining = 0
+
+    others = [c for c in comps if c != target_comp]
+    if not others:
         return
 
-    free_vals = df.loc[free_idx, "Points"].astype(float).clip(lower=0)
-    if free_vals.sum() <= 0:
-        # repartir igual entre los libres
-        n = len(free_idx)
+    current_sum_others = sum(points[c] for c in others)
+    if remaining == 0:
+        for c in others: points[c] = 0
+        return
+
+    if current_sum_others <= 0:
+        # repartir igual
+        n = len(others)
         base = remaining // n
-        vals = [base] * n
+        arr = np.array([base] * n, dtype=int)
         for i in range(remaining - base * n):
-            vals[i] += 1
-    else:
-        scaled = free_vals / free_vals.sum() * remaining
-        ints = np.floor(scaled).astype(int)
-        delta = remaining - ints.sum()
-        residuos = (scaled - ints).values
-        order = np.argsort(residuos)[::-1]
-        for i in range(abs(delta)):
-            ints.iloc[order[i % len(order)]] += 1 if delta > 0 else -1
-        vals = ints.clip(lower=0).astype(int).tolist()
+            arr[i] += 1
+        for c, v in zip(others, arr.tolist()): points[c] = int(v)
+        return
 
-    for idx, v in zip(free_idx, vals):
-        comp = df.loc[idx, "Component"]
-        st.session_state.points[comp] = int(v)
+    # Escalar proporcional y cerrar a entero con mayores restos
+    arr_float = np.array([points[c] for c in others], dtype=float)
+    arr_scaled = arr_float / arr_float.sum() * remaining
+    arr_int = _round_to_target(arr_scaled, remaining)
+    # No negativos (por estructura no deberían serlo)
+    arr_int = np.clip(arr_int, 0, None)
 
-def equal_split():
-    """Reparte igual solo entre no bloqueados, respetando lo que esté lockeado."""
-    df = df_from_state()
-    locked_sum = int(df.loc[df["Lock"], "Points"].sum())
-    free_idx = df.index[~df["Lock"]]
-    remaining = max(0, 100 - locked_sum)
-    n = len(free_idx)
-    if n == 0: return
-    base = remaining // n
-    vals = [base] * n
-    for i in range(remaining - base * n):
-        vals[i] += 1
-    for idx, v in zip(free_idx, vals):
-        comp = df.loc[idx, "Component"]
-        st.session_state.points[comp] = int(v)
+    for c, v in zip(others, arr_int.tolist()):
+        points[c] = int(v)
 
 def adjust(comp: str, delta: int):
-    """Suma/resta delta al componente si no está lockeado. Mantiene 0..1000 (después normalizás)."""
-    if st.session_state.locks.get(comp, False):
-        return
-    newv = int(st.session_state.points.get(comp, 0)) + int(delta)
-    if newv < 0: newv = 0
-    if newv > 1000: newv = 1000
-    st.session_state.points[comp] = newv
+    """Click en −10, −1, +1, +10."""
+    st.session_state.points[comp] = int(st.session_state.points.get(comp, 0)) + int(delta)
+    _rebalance_except(comp)
+
+def set_exact(comp: str, new_val: int):
+    """Entrada numérica exacta opcional → rebalance instantáneo del resto."""
+    st.session_state.points[comp] = int(new_val)
+    _rebalance_except(comp)
 
 def ensure_sheet_headers(sh, components: list):
     headers = ["timestamp", "email", "session_id"] + components
@@ -203,13 +195,13 @@ if not st.session_state.components:
     df_init, err = load_components_and_weights(DEFAULTS_CSV_PATH)
     if err:
         st.error(err); st.stop()
-    set_initial_state_from_df(df_init)
+    set_initial_state(df_init)
 
 # ─────────────── UI ───────────────
 st.title("RGI – Budget Allocation (BAP)")
-st.caption("Asigná **100 puntos** a los subindicadores. Controles rápidos: −10 / −1 / +1 / +10. Podés bloquear con 🔒. Sin sliders.")
+st.caption("Asigná **100 puntos**. Los cambios mantienen el total **siempre en 100** automáticamente. Sin sliders, sin locks, sin normalizar.")
 
-# Email en la misma pantalla (identificador)
+# Email (identificador)
 email = st.text_input("Email (obligatorio para enviar)", value=st.session_state.email, placeholder="nombre@organizacion.org")
 if email != st.session_state.email:
     st.session_state.email = email.strip()
@@ -217,78 +209,68 @@ if email != st.session_state.email:
 st.write("---")
 st.subheader("Asignación")
 
-# Fila por componente
+# Filas con: −10 · −1 · [VALOR] · +1 · +10
 for comp in st.session_state.components:
     pts = int(st.session_state.points[comp])
-    lock_key = f"lock_{comp}"
-    if lock_key not in st.session_state:
-        st.session_state[lock_key] = bool(st.session_state.locks[comp])
 
     with st.container():
         st.markdown(f"<div class='row-wrap'><span class='comp'>{comp}</span></div>", unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([1.1, 0.9, 0.9, 0.9, 0.9, 1.4, 1.4])
+        c1, c2, c3, c4, c5, c6 = st.columns([0.9, 0.9, 1.2, 0.9, 0.9, 1.6])
 
         with c1:
-            st.markdown(f"<span class='points-pill'>{pts}</span>", unsafe_allow_html=True)
-
+            st.button("−10", key=f"m10_{comp}", on_click=adjust, args=(comp, -10), help="Restar 10", type="secondary")
         with c2:
-            st.button("−10", key=f"m10_{comp}", on_click=adjust, args=(comp, -10), disabled=st.session_state[lock_key])
+            st.button("−1",  key=f"m1_{comp}",  on_click=adjust, args=(comp,  -1), help="Restar 1",  type="secondary")
+
         with c3:
-            st.button("−1",  key=f"m1_{comp}",  on_click=adjust, args=(comp,  -1), disabled=st.session_state[lock_key])
+            # Valor en el centro (muestra y permite tipear exacto si hace falta)
+            new_val = st.number_input(" ", key=f"num_{comp}", value=pts, min_value=0, max_value=100, step=1,
+                                      label_visibility="collapsed")
+            if new_val != pts:
+                set_exact(comp, new_val)
+                pts = int(st.session_state.points[comp])
+
+            # Además mostramos la pill siempre actualizada
+            st.markdown(f"<div style='margin-top:.35rem'><span class='points-pill'>{pts}</span></div>", unsafe_allow_html=True)
+
         with c4:
-            st.button("+1",  key=f"p1_{comp}",  on_click=adjust, args=(comp,  +1), disabled=st.session_state[lock_key])
+            st.button("+1",  key=f"p1_{comp}",  on_click=adjust, args=(comp,  +1), help="Sumar 1")
         with c5:
-            st.button("+10", key=f"p10_{comp}", on_click=adjust, args=(comp, +10), disabled=st.session_state[lock_key])
+            st.button("+10", key=f"p10_{comp}", on_click=adjust, args=(comp, +10), help="Sumar 10")
 
         with c6:
-            # Entrada opcional por si quieren tipear un número exacto
-            new_val = st.number_input(" ", key=f"num_{comp}", value=pts, min_value=0, max_value=1000, step=1,
-                                      label_visibility="collapsed", disabled=st.session_state[lock_key])
-            if new_val != pts:
-                st.session_state.points[comp] = int(new_val)
+            st.caption("Consejo: usá ±10 para cambios grandes y ±1 para fino.", help="UI tip")
 
-        with c7:
-            st.checkbox("🔒 Lock", key=lock_key, value=st.session_state[lock_key])
-            st.session_state.locks[comp] = bool(st.session_state[lock_key])
-
-# Totales + acciones globales
+# Resumen y gráfico
 df_view = df_from_state()
 total_now = int(df_view["Points"].sum())
-restantes = 100 - total_now
 
 st.write("---")
-colA, colB = st.columns([2, 1])
+colA, colB = st.columns([2,1])
 with colA:
-    if restantes == 0:
-        st.markdown(f"**Total asignado:** <span class='badge'>{total_now} / 100 (OK)</span>", unsafe_allow_html=True)
-    elif restantes > 0:
-        st.markdown(f"**Total asignado:** <span class='badge'>{total_now} / 100</span> · te faltan **{restantes}**", unsafe_allow_html=True)
-    else:
-        st.markdown(f"**Total asignado:** <span class='badge'>{total_now} / 100</span> · te pasaste por **{abs(restantes)}**", unsafe_allow_html=True)
-
+    st.markdown(f"**Total asignado:** <span class='badge'>{total_now} / 100</span>", unsafe_allow_html=True)
 with colB:
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Repartir igual"):
-            equal_split()
-            df_view = df_from_state(); total_now = int(df_view["Points"].sum()); restantes = 100 - total_now
-    with c2:
-        if st.button("Normalizar a 100"):
-            normalize_to_100()
-            df_view = df_from_state(); total_now = int(df_view["Points"].sum()); restantes = 100 - total_now
+    if st.button("Repartir igual", help="Distribuye 100 en partes iguales"):
+        n = len(st.session_state.components)
+        base = 100 // n
+        arr = np.array([base]*n, dtype=int)
+        for i in range(100 - base*n):
+            arr[i] += 1
+        for c, v in zip(st.session_state.components, arr.tolist()):
+            st.session_state.points[c] = int(v)
+        df_view = df_from_state()
+        total_now = int(df_view["Points"].sum())
 
-# Vista rápida
 st.bar_chart(df_view.set_index("Component")["Points"])
 
 st.write("---")
-left, right = st.columns([2, 1])
+left, right = st.columns([2,1])
 with left:
-    st.caption("El envío se habilita cuando el total es 100 y el email es válido. No usamos sliders para mantener la app fluida con muchos usuarios simultáneos.")
+    st.caption("El envío se habilita con email válido (total siempre es 100).")
 with right:
     disabled_submit = (
         st.session_state.saving or st.session_state.submitted
         or not EMAIL_RE.match(st.session_state.email or "")
-        or (REQUIRE_TOTAL_100 and total_now != 100)
     )
     if st.button("Enviar", use_container_width=True, disabled=disabled_submit):
         st.session_state.saving = True
