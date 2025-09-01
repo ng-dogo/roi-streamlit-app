@@ -179,8 +179,3 @@ if st.session_state.stage == 2:
 
     if st.session_state.submitted:
         st.caption("Response already submitted for this session.")
-
-    st.markdown("---")
-    if st.button("← Back"):
-        st.session_state.stage = 1
-        st.rerun()
