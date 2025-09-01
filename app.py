@@ -18,9 +18,19 @@ html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Robot
 .stButton>button:disabled{background:#ccc;color:#666}
 .main .block-container{max-width:900px}
 hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
-.segment-bar{display:flex;height:18px;border-radius:6px;overflow:hidden;background:#eee}
-.segment{height:18px}
-.badge{padding:2px 8px;border-radius:999px;background:#f5f5f5;font-size:12px}
+
+/* Barra 100% apilada */
+.segment-bar{display:flex;height:18px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.15);}
+
+/* Badge de valor: alto contraste para light/dark */
+.badge{
+  padding:2px 10px;border-radius:999px;
+  background:#f8f8f8;color:#111;border:1px solid rgba(0,0,0,.15);
+  font-size:12px; display:inline-block; min-width:46px; text-align:center;
+}
+
+/* Ajustes tipográficos */
+.label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 """
 st.markdown(MINI_CSS, unsafe_allow_html=True)
@@ -38,6 +48,12 @@ RGI_COMPONENTS = [
 ]
 DEFAULTS_CSV_PATH = "rgi_defaults.csv"
 REQUIRE_TOTAL_100 = True
+
+# Colores sólidos (8) para la barra apilada (alto contraste)
+SEGMENT_COLORS = [
+    "#0B8F6A", "#137F88", "#2D6CC2", "#7A5BE3",
+    "#C04ECF", "#D74D7F", "#E56E3E", "#B7A931"
+]
 
 # ─────────────── STATE ───────────────
 if "session_id" not in st.session_state:
@@ -165,11 +181,11 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
         except Exception:
             raise
 
-# ─────────────── REBALANCE “COLA” (mantener 100 sin tocar lo ya puesto) ───────────────
+# ─────────────── REBALANCE “COLA” ───────────────
 def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
     """
-    Ajusta SOLO los componentes posteriores (empezando por el último hacia atrás)
-    para que la suma sea 100. Si no alcanza la cola, se capa el nuevo valor.
+    Ajusta SOLO los componentes posteriores (de atrás hacia adelante) para cerrar en 100.
+    Si la cola no alcanza, se capa el nuevo valor.
     """
     comps = RGI_COMPONENTS
     w = weights.copy()
@@ -180,19 +196,18 @@ def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
         return w
 
     tail = comps[changed_idx+1:]
-    # Si cambian el último, lo fijamos a 100 - suma(previos)
     if not tail:
-        w[changed] = new_val  # intento
+        # Último: se fija a 100 - suma(previos)
+        w[changed] = new_val
         sum_others = sum(w[c] for c in comps[:-1])
         w[changed] = max(0, min(100, 100 - sum_others))
         return w
 
     delta = new_val - old_val
     if delta > 0:
-        # Necesitamos quitar 'delta' de la cola
+        # Hay que quitar 'delta' de la cola
         reducible = sum(int(w[c]) for c in tail)
         allowed_inc = min(delta, reducible)
-        # Si no alcanza, capamos el nuevo valor
         new_val = old_val + allowed_inc
         w[changed] = new_val
         remaining = allowed_inc
@@ -203,7 +218,7 @@ def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
             if remaining <= 0:
                 break
     else:
-        # delta < 0 -> hay 'add' para repartir en la cola
+        # delta < 0: hay que sumar -delta en la cola
         add = -delta
         addable = sum(100 - int(w[c]) for c in tail)
         allowed_dec = min(add, addable)
@@ -218,12 +233,11 @@ def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
             if remaining <= 0:
                 break
 
-    # Seguridad: limitar 0..100 y cerrar exacto en 100 por si quedó residuo
+    # Sanitizar
     for c in comps:
         w[c] = max(0, min(100, int(w[c])))
     s = sum(w.values())
     if s != 100:
-        # Corrige contra el último componente (más intuitivo)
         w[comps[-1]] += (100 - s)
         w[comps[-1]] = max(0, min(100, int(w[comps[-1]])))
     return w
@@ -245,6 +259,7 @@ def reset_to_defaults():
         w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
         st.session_state.weights = w
     st.session_state.last_weights = st.session_state.weights.copy()
+    st.rerun()
 
 def equalize_all():
     equal = 100 // len(RGI_COMPONENTS)
@@ -252,6 +267,7 @@ def equalize_all():
     w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
     st.session_state.weights = w
     st.session_state.last_weights = w.copy()
+    st.rerun()
 
 # ─────────────── UI ───────────────
 st.title("RGI – Budget Allocation")
@@ -287,14 +303,18 @@ if st.session_state.stage == 2:
         if st.button("Equalize all"):
             equalize_all()
 
-    # Barra apilada 100% (visual)
+    # Barra apilada 100% (visual, alto contraste)
     total_now = sum(st.session_state.weights.values())
     widths = [max(0, st.session_state.weights[c]) for c in RGI_COMPONENTS]
     widths = [w if total_now > 0 else 0 for w in widths]
     bar_html = ['<div class="segment-bar">']
     for i, c in enumerate(RGI_COMPONENTS):
         pct = 0 if total_now == 0 else (widths[i] / total_now * 100.0)
-        bar_html.append(f'<div class="segment" title="{c}: {st.session_state.weights[c]}%" style="width:{pct}%; background:rgba(2,89,59,{0.35 + 0.05*i});"></div>')
+        color = SEGMENT_COLORS[i % len(SEGMENT_COLORS)]
+        bar_html.append(
+            f'<div class="segment" title="{c}: {st.session_state.weights[c]}%" '
+            f'style="width:{pct}%; background:{color};"></div>'
+        )
     bar_html.append("</div>")
     st.markdown("".join(bar_html), unsafe_allow_html=True)
 
@@ -309,12 +329,13 @@ if st.session_state.stage == 2:
         with cols[1]:
             st.write(f"<span class='badge'>{st.session_state.weights.get(comp, 0)}%</span>", unsafe_allow_html=True)
 
-    # Detectar cambio y aplicar rebalance de cola
+    # Detectar cambio y aplicar rebalance de cola → refrescar UI al instante
     idx = detect_changed_component(new_ui_vals, st.session_state.last_weights)
     if idx is not None:
         reb = trailing_rebalance(st.session_state.last_weights, idx, int(new_ui_vals[RGI_COMPONENTS[idx]]))
         st.session_state.weights = reb
         st.session_state.last_weights = reb.copy()
+        st.rerun()  # 🔁 refresca sliders/barras inmediatamente
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.write(f"**Total allocated:** {sum(st.session_state.weights.values())} / 100")
