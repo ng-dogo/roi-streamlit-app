@@ -20,10 +20,7 @@ html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Robot
 hr{border:none;border-top:1px solid #e6e6e6;margin:1rem 0}
 .segment-bar{display:flex;height:18px;border-radius:6px;overflow:hidden;background:#eee}
 .segment{height:18px}
-.legend{display:grid;grid-template-columns: 1fr auto auto auto;gap:.5rem .75rem;align-items:center}
-.legend div.label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .badge{padding:2px 8px;border-radius:999px;background:#f5f5f5;font-size:12px}
-.lock{font-size:12px;color:#555}
 </style>
 """
 st.markdown(MINI_CSS, unsafe_allow_html=True)
@@ -55,8 +52,6 @@ if "saving" not in st.session_state:
     st.session_state.saving = False
 if "weights" not in st.session_state:
     st.session_state.weights = {c: 0 for c in RGI_COMPONENTS}  # enteros 0..100
-if "locks" not in st.session_state:
-    st.session_state.locks = {c: False for c in RGI_COMPONENTS}
 if "last_weights" not in st.session_state:
     st.session_state.last_weights = st.session_state.weights.copy()
 
@@ -113,22 +108,18 @@ def autoload_defaults_by_email(email: str):
     df = load_defaults_csv(DEFAULTS_CSV_PATH)
     defaults = load_defaults_for_key(df, email)
     if defaults:
-        # Si no suman 100, normalizamos a 100
+        # Normalizamos a 100 por si no suman exacto
         s = sum(defaults.values())
         if s <= 0:
             defaults = {k: (100 // len(RGI_COMPONENTS)) for k in RGI_COMPONENTS}
             defaults[RGI_COMPONENTS[0]] += 100 - sum(defaults.values())
         else:
             defaults = {k: int(round(v * 100.0 / s)) for k, v in defaults.items()}
-            # Ajuste residuo por redondeo
             residue = 100 - sum(defaults.values())
             if residue != 0:
-                # distribuir el residuo empezando por los mayores
                 ordered = sorted(RGI_COMPONENTS, key=lambda c: -defaults[c])
                 for i in range(abs(residue)):
-                    idx = i % len(ordered)
-                    c = ordered[idx]
-                    defaults[c] += 1 if residue > 0 else -1
+                    defaults[ordered[i % len(ordered)]] += 1 if residue > 0 else -1
         st.session_state.weights = defaults
         st.session_state.last_weights = defaults.copy()
         st.success("Defaults loaded from CSV.")
@@ -152,7 +143,7 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
     sh = get_sheet()
     ensure_headers(sh)
     row = [dt.datetime.now().isoformat(), email, session_id] + [int(weights[c]) for c in RGI_COMPONENTS]
-    # Reintentos con backoff exponencial ante cuota/errores transitorios
+    # Reintentos con backoff
     max_tries, delay = 5, 0.5
     for attempt in range(1, max_tries + 1):
         try:
@@ -174,130 +165,91 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
         except Exception:
             raise
 
-# ─────────────── REBALANCE ENGINE (mantener 100) ───────────────
-def _rebalance(weights: dict, changed: str, new_val: int, locks: dict) -> dict:
+# ─────────────── REBALANCE “COLA” (mantener 100 sin tocar lo ya puesto) ───────────────
+def trailing_rebalance(weights: dict, changed_idx: int, new_val: int) -> dict:
     """
-    Ajusta proporcionalmente el resto (no bloqueados) para que la suma sea 100.
-    Mantiene enteros y reparte el residuo por magnitud.
+    Ajusta SOLO los componentes posteriores (empezando por el último hacia atrás)
+    para que la suma sea 100. Si no alcanza la cola, se capa el nuevo valor.
     """
-    old_val = int(weights[changed])
-    if new_val == old_val:
-        return weights
-
-    # Límite duro si todo lo demás está bloqueado o en 0 y se quiere subir
-    other_keys = [c for c in RGI_COMPONENTS if c != changed and not locks.get(c, False)]
-    if not other_keys:
-        # Sin grados de libertad: cap al máximo posible para que total=100
-        cap = 100 - sum(weights[c] for c in RGI_COMPONENTS if c != changed)
-        new_val = max(0, min(int(new_val), int(cap)))
-        w = weights.copy(); w[changed] = new_val
-        return w
-
-    # Calculamos delta y la masa de los otros (solo no bloqueados)
-    delta = int(new_val) - int(old_val)
-    others_sum = sum(int(weights[c]) for c in other_keys)
-
+    comps = RGI_COMPONENTS
     w = weights.copy()
-    w[changed] = int(new_val)
-
-    if delta == 0:
+    changed = comps[changed_idx]
+    old_val = int(w[changed])
+    new_val = max(0, min(100, int(new_val)))
+    if new_val == old_val:
         return w
 
+    tail = comps[changed_idx+1:]
+    # Si cambian el último, lo fijamos a 100 - suma(previos)
+    if not tail:
+        w[changed] = new_val  # intento
+        sum_others = sum(w[c] for c in comps[:-1])
+        w[changed] = max(0, min(100, 100 - sum_others))
+        return w
+
+    delta = new_val - old_val
     if delta > 0:
-        # hay que restar 'delta' de los otros
-        reducible = others_sum
-        allowed = min(delta, reducible)
-        # escala multiplicativa
-        if others_sum > 0:
-            factor = (others_sum - allowed) / float(others_sum)
-            floats = {c: weights[c] * factor for c in other_keys}
-        else:
-            floats = {c: weights[c] for c in other_keys}
+        # Necesitamos quitar 'delta' de la cola
+        reducible = sum(int(w[c]) for c in tail)
+        allowed_inc = min(delta, reducible)
+        # Si no alcanza, capamos el nuevo valor
+        new_val = old_val + allowed_inc
+        w[changed] = new_val
+        remaining = allowed_inc
+        for c in reversed(tail):
+            take = min(remaining, int(w[c]))
+            w[c] = int(w[c]) - take
+            remaining -= take
+            if remaining <= 0:
+                break
     else:
-        # delta < 0: hay que sumar -delta a los otros
+        # delta < 0 -> hay 'add' para repartir en la cola
         add = -delta
-        if others_sum > 0:
-            # distribuir proporcional a sus pesos actuales
-            factor = (others_sum + add) / float(others_sum)
-            floats = {c: weights[c] * factor for c in other_keys}
-        else:
-            # si todos 0: distribuir equitativo entre no bloqueados
-            base = add / float(len(other_keys))
-            floats = {c: base for c in other_keys}
+        addable = sum(100 - int(w[c]) for c in tail)
+        allowed_dec = min(add, addable)
+        new_val = old_val - allowed_dec
+        w[changed] = new_val
+        remaining = allowed_dec
+        for c in reversed(tail):
+            room = 100 - int(w[c])
+            put = min(remaining, room)
+            w[c] = int(w[c]) + put
+            remaining -= put
+            if remaining <= 0:
+                break
 
-    # Redondeo a enteros + ajuste de residuo
-    rounded = {c: int(round(floats[c])) for c in other_keys}
-    # Ajustar residuo para que total=100 exacto
-    w.update(rounded)
-    total = sum(int(v) for v in w.values())
-    residue = 100 - total
-    if residue != 0:
-        # Orden para aplicar residuo: por mayor fracción faltante respecto a float original
-        diffs = sorted(other_keys, key=lambda c: (floats[c] - rounded[c]), reverse=(residue > 0))
-        for i in range(abs(residue)):
-            c = diffs[i % len(diffs)]
-            w[c] += 1 if residue > 0 else -1
-
-    # Cap de seguridad por si algún negativo cae por rounding
-    for c in RGI_COMPONENTS:
+    # Seguridad: limitar 0..100 y cerrar exacto en 100 por si quedó residuo
+    for c in comps:
         w[c] = max(0, min(100, int(w[c])))
-
-    # Último ajuste fino si por límites quedó off
     s = sum(w.values())
     if s != 100:
-        # mover la diferencia al componente más grande (si sobra) o al menor (si falta)
-        target = max(w, key=w.get) if s > 100 else min(w, key=w.get)
-        w[target] -= (s - 100)
+        # Corrige contra el último componente (más intuitivo)
+        w[comps[-1]] += (100 - s)
+        w[comps[-1]] = max(0, min(100, int(w[comps[-1]])))
     return w
 
-def apply_rebalance_from_ui(new_ui_vals: dict):
-    """
-    Detecta qué componente cambió y aplica _rebalance() respetando locks.
-    """
-    old = st.session_state.last_weights
-    changed = None
-    for c in RGI_COMPONENTS:
+def detect_changed_component(new_ui_vals: dict, old: dict) -> int | None:
+    for idx, c in enumerate(RGI_COMPONENTS):
         if int(new_ui_vals[c]) != int(old[c]):
-            changed = c
-            break
-    if changed is None:
-        return  # nada cambió
-    # si el cambiado está locked, ignoramos cambio y restauramos UI
-    if st.session_state.locks.get(changed, False):
-        st.session_state.weights = old.copy()
-        return
-    rebalanced = _rebalance(old, changed, int(new_ui_vals[changed]), st.session_state.locks)
-    st.session_state.weights = rebalanced
-    st.session_state.last_weights = rebalanced.copy()
+            return idx
+    return None
 
 def reset_to_defaults():
-    # si había defaults por email, reaplicamos; si no, reparto parejo
     df = load_defaults_csv(DEFAULTS_CSV_PATH)
     defaults = load_defaults_for_key(df, st.session_state.email)
     if defaults:
         st.session_state.weights = defaults
     else:
         equal = 100 // len(RGI_COMPONENTS)
-        st.session_state.weights = {c: equal for c in RGI_COMPONENTS}
-        st.session_state.weights[RGI_COMPONENTS[0]] += 100 - sum(st.session_state.weights.values())
+        w = {c: equal for c in RGI_COMPONENTS}
+        w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
+        st.session_state.weights = w
     st.session_state.last_weights = st.session_state.weights.copy()
 
-def equalize_unlocked():
-    unlocked = [c for c in RGI_COMPONENTS if not st.session_state.locks.get(c, False)]
-    if not unlocked:
-        return
-    locked_sum = sum(st.session_state.weights[c] for c in RGI_COMPONENTS if c not in unlocked)
-    pool = 100 - locked_sum
-    if pool < 0:
-        pool = 0
-    base = pool // len(unlocked)
-    w = st.session_state.weights.copy()
-    for c in unlocked:
-        w[c] = base
-    # residuo
-    residue = pool - base * len(unlocked)
-    for i in range(residue):
-        w[unlocked[i % len(unlocked)]] += 1
+def equalize_all():
+    equal = 100 // len(RGI_COMPONENTS)
+    w = {c: equal for c in RGI_COMPONENTS}
+    w[RGI_COMPONENTS[0]] += 100 - sum(w.values())
     st.session_state.weights = w
     st.session_state.last_weights = w.copy()
 
@@ -324,23 +276,21 @@ if st.session_state.stage == 2:
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     st.subheader("Step 2 · Allocate your 100 points")
-    st.caption("Move any slider. The others adjust automatically to keep the total at 100. You can lock items you don't want to change.")
+    st.caption("Move any slider. Only the last components adjust automatically so the total stays at 100. What you already set stays put.")
 
-    # ── Controls: Reset / Equalize
-    c_ctrl1, c_ctrl2, c_ctrl3 = st.columns([1,1,3])
-    with c_ctrl1:
+    # Controles: Reset / Equalize
+    c1, c2, _ = st.columns([1,1,4])
+    with c1:
         if st.button("Reset to defaults"):
             reset_to_defaults()
-    with c_ctrl2:
-        if st.button("Equalize (unlocked)"):
-            equalize_unlocked()
+    with c2:
+        if st.button("Equalize all"):
+            equalize_all()
 
-    # ── Stacked 100% bar (visual)
+    # Barra apilada 100% (visual)
     total_now = sum(st.session_state.weights.values())
     widths = [max(0, st.session_state.weights[c]) for c in RGI_COMPONENTS]
-    # Evitar división por cero
     widths = [w if total_now > 0 else 0 for w in widths]
-
     bar_html = ['<div class="segment-bar">']
     for i, c in enumerate(RGI_COMPONENTS):
         pct = 0 if total_now == 0 else (widths[i] / total_now * 100.0)
@@ -348,23 +298,23 @@ if st.session_state.stage == 2:
     bar_html.append("</div>")
     st.markdown("".join(bar_html), unsafe_allow_html=True)
 
-    st.write("")  # pequeño espacio
+    st.write("")
 
-    # ── Lista de sliders + locks
+    # Sliders (0..100, enteros)
     new_ui_vals = {}
     for comp in RGI_COMPONENTS:
-        cols = st.columns([6, 2, 1, 1])
+        cols = st.columns([6, 2])
         with cols[0]:
             new_ui_vals[comp] = st.slider(comp, 0, 100, int(st.session_state.weights.get(comp, 0)), key=f"sl_{comp}")
         with cols[1]:
             st.write(f"<span class='badge'>{st.session_state.weights.get(comp, 0)}%</span>", unsafe_allow_html=True)
-        with cols[2]:
-            st.session_state.locks[comp] = st.checkbox("Lock", value=st.session_state.locks.get(comp, False), key=f"lk_{comp}")
-        with cols[3]:
-            st.write("")  # spacer
 
-    # Aplicar rebalance si cambió uno
-    apply_rebalance_from_ui(new_ui_vals)
+    # Detectar cambio y aplicar rebalance de cola
+    idx = detect_changed_component(new_ui_vals, st.session_state.last_weights)
+    if idx is not None:
+        reb = trailing_rebalance(st.session_state.last_weights, idx, int(new_ui_vals[RGI_COMPONENTS[idx]]))
+        st.session_state.weights = reb
+        st.session_state.last_weights = reb.copy()
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.write(f"**Total allocated:** {sum(st.session_state.weights.values())} / 100")
@@ -376,7 +326,7 @@ if st.session_state.stage == 2:
         (REQUIRE_TOTAL_100 and sum(st.session_state.weights.values()) != 100)
     )
 
-    # 🔒 Anti multi-submit
+    # Anti multi-submit
     if st.button("Submit", disabled=disabled_submit):
         st.session_state.submitted = True
         st.session_state.saving = True
