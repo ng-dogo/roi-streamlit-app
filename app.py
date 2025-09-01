@@ -63,17 +63,20 @@ def ensure_headers(sh):
     if not vals:  # hoja vacía
         sh.append_row(headers)
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
+    """Carga CSV, quita BOM/espacios, crea columna clave __key__."""
     try:
-        df = pd.read_csv(path)
-        # soportamos columnas "email" o "name"
-        if "email" in df.columns:
-            df["__key__"] = df["email"].astype(str).str.strip().str.casefold()
-        elif "name" in df.columns:
-            df["__key__"] = df["name"].astype(str).str.strip().str.casefold()
-        else:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        # strip headers
+        df.columns = df.columns.astype(str).str.strip()
+        # clave por email (o name como fallback)
+        key_col = "email" if "email" in df.columns else ("name" if "name" in df.columns else None)
+        if key_col is None:
             return pd.DataFrame()
+        # strip valores clave
+        df[key_col] = df[key_col].astype(str).str.strip()
+        df["__key__"] = df[key_col].str.casefold()
         return df
     except Exception:
         return pd.DataFrame()
@@ -83,6 +86,7 @@ def map_defaults_row_to_dict(row: pd.Series) -> dict:
     Acepta dos esquemas en el CSV para los pesos:
       - 'w::<Componente>'
       - '<Componente>' (exacto)
+    Convierte a float con coerción segura.
     """
     out = {}
     for comp in RGI_COMPONENTS:
@@ -93,8 +97,11 @@ def map_defaults_row_to_dict(row: pd.Series) -> dict:
             val = row[c1]
         elif c2 in row and pd.notna(row[c2]):
             val = row[c2]
+        # coerción segura (acepta "20", "20.0", "20%", etc.)
+        if isinstance(val, str):
+            val = val.replace("%", "").strip()
         try:
-            out[comp] = float(val) if val is not None else 0.0
+            out[comp] = float(val) if val is not None and val != "" else 0.0
         except Exception:
             out[comp] = 0.0
     return out
@@ -132,10 +139,7 @@ def save_to_sheet(email: str, weights: dict, session_id: str):
     client = gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
     sh = client.open_by_key(st.secrets.sheet_id).sheet1
 
-    # Asegurar encabezados si la hoja está vacía
     ensure_headers(sh)
-
-    # Armar fila y guardar
     row = [
         dt.datetime.now().isoformat(),
         email,
@@ -151,13 +155,18 @@ if st.session_state.stage == 1:
     st.subheader("Step 1 · Your email")
     email = st.text_input("Email", placeholder="name@example.org", value=st.session_state.email)
 
-    can_continue = bool(EMAIL_RE.match(email))
-    if st.button("Continue", disabled=not can_continue):
-        st.session_state.email = email.strip()
-        st.session_state.stage = 2
-        # intento de precarga automática
-        autoload_defaults_by_email(st.session_state.email)
-        st.rerun()
+    cols = st.columns([1,1,4])
+    with cols[0]:
+        if st.button("Reload defaults file"):
+            load_defaults_csv.clear()   # limpiar caché si actualizaste el CSV
+            st.success("Defaults file reloaded.")
+    with cols[1]:
+        can_continue = bool(EMAIL_RE.match(email))
+        if st.button("Continue", disabled=not can_continue):
+            st.session_state.email = email.strip()
+            st.session_state.stage = 2
+            autoload_defaults_by_email(st.session_state.email)
+            st.rerun()
 
     st.caption("We use your email to match initial weights (if available) and to record your submission.")
 
@@ -177,14 +186,12 @@ if st.session_state.stage == 2:
             key=f"num_{comp}"
         )
 
-    # Guardar en estado y validar total
     st.session_state.weights = {k: float(v) for k, v in new_vals.items()}
     total = float(np.sum(list(st.session_state.weights.values())))
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.write(f"**Total allocated:** {total:.0f} / 100")
 
-    # Submit
     disabled_submit = (
         st.session_state.saving or st.session_state.submitted or
         not st.session_state.email or
