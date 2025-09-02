@@ -107,7 +107,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ───────── CONSTANTS ─────────
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
 TOTAL_POINTS = 1.0  # pesos suman 1.00
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
 THANKS_VISIBLE_SEC = 3.0
 EPS = 1e-6  # tolerancia numérica
@@ -370,7 +370,9 @@ render_floating_hud(used, rem, pct_used)
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
-ok_email = bool(EMAIL_RE.match(st.session_state.email or ""))
+email_raw = st.session_state.email or ""
+email_norm = email_raw.strip()
+ok_email = bool(EMAIL_RE.match(email_norm))
 now = time.time()
 cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 
@@ -435,12 +437,13 @@ with right:
 
 # ───────── STATUS ─────────
 # ───────── STATUS ─────────
+# ───────── STATUS ─────────
 if st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
     if st.session_state.submitted:
-        # Mensaje persistente tras el éxito
-        status_box.success("✅ Submitted — Thank you! Your response was saved.")
+        # no mostramos nada extra: el botón ya indica éxito
+        pass
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
         st.session_state.status = "idle"
@@ -450,9 +453,6 @@ else:
     elif st.session_state.status == "error":
         status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
         st.session_state.status = "idle"
-    elif st.session_state.status == "saved":
-        # Compatibilidad: si todavía no marcaste submitted=True por alguna razón
-        status_box.success("✅ Submitted — Thank you! Your response was saved.")
     else:
         status_box.empty()
 
