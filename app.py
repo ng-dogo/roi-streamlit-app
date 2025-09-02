@@ -34,6 +34,12 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
+
+/* Tabla ranking minimalista (no widgets) */
+.rank{width:100%; border-collapse:collapse; font-size:.95rem}
+.rank th, .rank td{padding:.35rem .5rem; border-bottom:1px solid var(--border)}
+.rank th{font-weight:600; color:var(--muted); text-align:left}
+.rank td.r{text-align:right}
 .small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
 </style>
 """
@@ -219,11 +225,9 @@ for comp in indicators:
                   disabled=(cur <= 0) or st.session_state.saving)
     with colC:
         st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-        cur = int(st.session_state.weights[comp])
-        rem_now = remaining_points(st.session_state.weights)
-        max_allowed = cur + rem_now
+        # 🔧 FIX 1: max_value fijo para evitar resets por cambios de límites
         st.number_input(
-            label="", key=f"num_{comp}", min_value=0, max_value=int(max_allowed),
+            label="", key=f"num_{comp}", min_value=0, max_value=100,
             step=1, format="%d", label_visibility="collapsed",
             on_change=make_on_change(comp), disabled=st.session_state.saving
         )
@@ -234,19 +238,29 @@ for comp in indicators:
                   disabled=(not can_add) or st.session_state.saving)
 
 # ───────── LIVE RANKING (minimal, non-intrusive) ─────────
-st.markdown("<hr/>", unsafe_allow_html=True)
-st.markdown("**Ranking (live)**")
-# Build ranking snapshot without affecting allocation state
-_sorted = sorted(st.session_state.weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
-df_rank = pd.DataFrame(_sorted, columns=["Indicator", "Points"])
-df_rank["Rank"] = np.arange(1, len(df_rank) + 1, dtype=int)
-df_rank["Share"] = (df_rank["Points"].astype(int) / TOTAL_POINTS * 100).round(0).astype(int).astype(str) + "%"
-df_rank = df_rank[["Rank", "Indicator", "Points", "Share"]]
+def render_ranking_html(weights: Dict[str, int]) -> None:
+    ordered = sorted(weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
+    rows = []
+    rank = 1
+    for name, pts in ordered:
+        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{int(pts)}</td></tr>")
+        rank += 1
+    table_html = f"""
+    <div class='rowbox'>
+      <div class='name'>Ranking (live)</div>
+      <table class="rank">
+        <thead><tr><th>#</th><th>Indicator</th><th>Points</th></tr></thead>
+        <tbody>
+          {''.join(rows)}
+        </tbody>
+      </table>
+    </div>
+    <div class='small-note'>Updates instantly as you adjust values above.</div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
-st.markdown("<div class='rowbox'>", unsafe_allow_html=True)
-st.table(df_rank)
-st.markdown("</div>", unsafe_allow_html=True)
-st.markdown("<div class='small-note'>Snapshot updates instantly as you adjust values above.</div>", unsafe_allow_html=True)
+st.markdown("<hr/>", unsafe_allow_html=True)
+render_ranking_html(st.session_state.weights)
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
