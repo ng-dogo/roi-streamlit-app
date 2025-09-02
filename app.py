@@ -216,7 +216,6 @@ for comp in indicators:
         st.number_input(
             label="",
             key=f"num_{comp}",
-            #value=int(cur),
             min_value=0,
             max_value=int(max_allowed),
             step=1,
@@ -258,48 +257,51 @@ with left:
 
         submit_lock = get_submit_lock()
 
-        # si otro submit está corriendo, no spameamos mensajes; dejamos el status en 'saving'
+        # >>> CAMBIO 1: si el lock está ocupado, mostramos toast y abortamos este clic
         if not submit_lock.acquire(blocking=False):
-            st.session_state.status = "saving"
-        else:
-            try:
-                # doble verificación de cooldown
-                now2 = time.time()
-                if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
-                    st.session_state.status = "cooldown"
+            st.toast("Submission already in progress…", icon="⏳")
+            st.stop()
+
+        try:
+            # doble verificación de cooldown
+            now2 = time.time()
+            if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
+                st.session_state.status = "cooldown"
+            else:
+                ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
+
+                if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
+                    st.session_state.status = "duplicate"
                 else:
-                    ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
+                    st.session_state.inflight_payload_hash = ph
+                    st.session_state.saving = True
+                    st.session_state.status = "saving"
 
-                    if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
-                        st.session_state.status = "duplicate"
-                    else:
-                        st.session_state.inflight_payload_hash = ph
-                        st.session_state.saving = True
-                        st.session_state.status = "saving"
-
-                        try:
-                            save_to_sheet(
-                                st.session_state.email.strip(),
-                                st.session_state.weights,
-                                st.session_state.session_id,
-                                indicator_order=indicators
-                            )
-                            st.session_state.last_payload_hash = ph
-                            st.session_state.submitted = True
-                            st.session_state.status = "saved"
-                        except Exception as e:
-                            st.session_state.status = "error"
-                            st.session_state.error_msg = str(e)
-                        finally:
-                            st.session_state.saving = False
-                            st.session_state.inflight_payload_hash = ""
-                            st.session_state.last_submit_ts = time.time()
-            finally:
-                # liberar siempre el lock
-                try:
-                    submit_lock.release()
-                except Exception:
-                    pass
+                    try:
+                        save_to_sheet(
+                            st.session_state.email.strip(),
+                            st.session_state.weights,
+                            st.session_state.session_id,
+                            indicator_order=indicators
+                        )
+                        st.session_state.last_payload_hash = ph
+                        st.session_state.submitted = True
+                        st.session_state.status = "saved"
+                        # >>> (Opcional) refresco inmediato para que no quede ningún banner viejo
+                        st.rerun()
+                    except Exception as e:
+                        st.session_state.status = "error"
+                        st.session_state.error_msg = str(e)
+                    finally:
+                        st.session_state.saving = False
+                        st.session_state.inflight_payload_hash = ""
+                        st.session_state.last_submit_ts = time.time()
+        finally:
+            # liberar siempre el lock
+            try:
+                submit_lock.release()
+            except Exception:
+                pass
 
 with right:
     st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
@@ -307,9 +309,11 @@ with right:
 # ───────── RENDER DEL STATUS (reemplazable, no queda pegado) ─────────
 if st.session_state.status == "saving":
     status_box.warning("Submission in progress. Please wait…")
+    # >>> CAMBIO 2: auto-clean si no hay guardado activo
+    if not st.session_state.get("saving", False):
+        st.session_state.status = "idle"
 elif st.session_state.status == "saved":
     status_box.success("Saved. Thank you.")
-    # limpiar estado visual para que no quede nada “pegado” en la próxima recarga
     st.session_state.status = "idle"
 elif st.session_state.status == "duplicate":
     status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
