@@ -152,14 +152,22 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     return out
 
 def normalize_to_100_ints(weights: Dict[str, float]) -> Dict[str, int]:
+    """Scale arbitrary weights to integer percentages summing to 100, preserving order via largest remainders."""
     total = float(sum(weights.values()))
     if total <= 0:
         n = max(1, len(weights))
         base = 100 // n
-    ...
+        rem = 100 - base * n
+        out = {k: base for k in weights}
+        for k in list(out.keys())[:rem]:
+            out[k] += 1
+        return out
+    # percent weights
+    raw = {k: 100.0 * float(v) / total for k, v in weights.items()}
     floors = {k: int(np.floor(x)) for k, x in raw.items()}
     leftover = 100 - sum(floors.values())
-    order = sorted(raw.keys(), key=lambda k: raw[k] - floors[k], reverse=True)
+    # distribute remainders
+    order = sorted(raw.keys(), key=lambda k: (raw[k] - floors[k]), reverse=True)
     out = floors.copy()
     for k in order[:leftover]:
         out[k] += 1
@@ -200,7 +208,7 @@ def get_worksheet():
     creds = {
         "type": "service_account",
         "client_email": st.secrets.gs_email,
-        "private_key": st.secrets.gs_key.replace("\\n", "\\n"),
+        "private_key": st.secrets.gs_key.replace("\\n", "\n"),
         "token_uri": "https://oauth2.googleapis.com/token",
     }
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
