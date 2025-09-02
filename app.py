@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re, uuid, datetime as dt, os
-from typing import Dict
+from typing import Dict, List, Tuple
 from google.oauth2.service_account import Credentials
 import gspread
 
@@ -12,7 +12,7 @@ st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layo
 
 CSS = """
 <style>
-:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.9); }
+:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
 .main .block-container{max-width:860px}
 hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
@@ -22,6 +22,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:disabled{background:#bbb;color:#fff}
 .center input[type=number]{text-align:center;font-weight:600}
+.donor-tray{padding:.5rem;border-radius:10px;border:1px solid rgba(127,127,127,.25); background:transparent}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -44,6 +45,14 @@ if "email" not in st.session_state:
 if "submitted" not in st.session_state:
     st.session_state.submitted = False
 
+# donor picker transient state
+if "pending_target" not in st.session_state:
+    st.session_state.pending_target: str | None = None
+if "pending_needed" not in st.session_state:
+    st.session_state.pending_needed: float = 0.0
+if "pending_selection" not in st.session_state:
+    st.session_state.pending_selection: List[str] = []
+
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
@@ -58,60 +67,104 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").fillna(0.0)
     return out
 
-def clamp01(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
-    return float(max(lo, min(hi, x)))
+def normalize_to_100(weights: Dict[str, float]) -> Dict[str, float]:
+    s = sum(weights.values())
+    if s <= 0:
+        n = len(weights); eq = 100.0 / max(1, n)
+        return {k: eq for k in weights}
+    return {k: 100.0 * v / s for k, v in weights.items()}
 
-def rebalance_keep_total(weights: Dict[str, float], target: str, new_val: float, total: int = TOTAL_POINTS) -> Dict[str, float]:
-    """Rebalance others proportionally to keep exact total; bounds [0,100]. No st.rerun here."""
-    w = {k: float(v) for k, v in weights.items()}
-    old = w[target]
-    new = clamp01(new_val)
-    delta = new - old
-    if abs(delta) < 1e-9:
+def remaining_points(weights: Dict[str, float]) -> float:
+    return TOTAL_POINTS - float(sum(weights.values()))
+
+def apply_delta(weights: Dict[str, float], comp: str, delta: float) -> Dict[str, float]:
+    """Apply +/- to a component if allowed by remaining. If not enough remaining, open donor tray."""
+    w = dict(weights)
+    rem = remaining_points(w)
+    if delta <= rem:  # we can increase directly (or always decrease)
+        w[comp] = max(0.0, min(100.0, w[comp] + delta))
         return w
-
-    others = [k for k in w.keys() if k != target]
-    if not others:
-        w[target] = new
-        return w
-
-    if delta > 0:
-        # take from others proportional to their current positive share
-        need = delta
-        for _ in range(3):
-            if need <= 1e-9: break
-            share = sum(max(w[k], 0.0) for k in others)
-            if share <= 1e-12: break
-            for k in others:
-                if w[k] <= 0: continue
-                take = need * (w[k] / share)
-                if w[k] - take < 0:
-                    need -= w[k]; w[k] = 0.0
-                else:
-                    w[k] -= take; need -= take
-        w[target] = clamp01(old + (delta - max(need, 0.0)))
     else:
-        # give to others proportional to headroom
-        give = -delta
-        for _ in range(3):
-            if give <= 1e-9: break
-            cap = sum(max(100.0 - w[k], 0.0) for k in others)
-            if cap <= 1e-12: break
-            for k in others:
-                room = max(100.0 - w[k], 0.0)
-                if room <= 0: continue
-                g = give * (room / cap)
-                if w[k] + g > 100.0:
-                    give -= (100.0 - w[k]); w[k] = 100.0
-                else:
-                    w[k] += g; give -= g
-        w[target] = clamp01(old - ( -delta - max(give, 0.0) ))
+        # Not enough remaining: set pending donor picker for exact shortfall
+        need = delta - rem
+        st.session_state.pending_target = comp
+        st.session_state.pending_needed = float(np.ceil(need))  # work in integer points for UI clarity
+        # preselect top donors (largest weights except target)
+        donors_sorted = sorted((k for k in w if k != comp), key=lambda k: w[k], reverse=True)
+        st.session_state.pending_selection = donors_sorted[:3]
+        return w
 
-    # small correction on target to hit exact total
-    s = sum(w.values())
-    if abs(s - total) > 1e-9:
-        w[target] = clamp01(w[target] + (total - s))
-    return w
+def apply_manual_set(weights: Dict[str, float], comp: str, new_val: float) -> Dict[str, float]:
+    """Set value via number_input; if needs points and remaining=0, open donor tray for the shortfall."""
+    w = dict(weights)
+    new_val = float(max(0.0, min(100.0, new_val)))
+    old = w[comp]
+    delta = new_val - old
+    if delta <= 0:
+        # freeing points is always allowed
+        w[comp] = new_val
+        return w
+    # need more points
+    rem = remaining_points(w)
+    if delta <= rem:
+        w[comp] = new_val
+        return w
+    else:
+        need = delta - rem
+        st.session_state.pending_target = comp
+        st.session_state.pending_needed = float(np.ceil(need))
+        donors_sorted = sorted((k for k in w if k != comp), key=lambda k: w[k], reverse=True)
+        st.session_state.pending_selection = donors_sorted[:3]
+        return w
+
+def try_apply_donor_transfer(weights: Dict[str, float], target: str, needed: float, donors: List[str]) -> Tuple[Dict[str, float], bool, str]:
+    """Take 'needed' points from selected donors proportionally to their current weights."""
+    if not donors:
+        return weights, False, "Select at least one donor."
+    w = dict(weights)
+    # compute current remaining (if any) to reduce the needed amount)
+    rem = remaining_points(w)
+    shortfall = max(0.0, needed - rem)  # only take what's truly missing
+    if shortfall <= 0.0:
+        # no need to take from donors; we can just increase target by 'needed'
+        w[target] = min(100.0, w[target] + needed)
+        return w, True, ""
+
+    donors = [d for d in donors if d in w and d != target]
+    if not donors:
+        return weights, False, "Invalid donors."
+
+    avail_total = sum(max(w[d], 0.0) for d in donors)
+    if avail_total < shortfall - 1e-9:
+        return weights, False, "Selected donors don't have enough points."
+
+    # take proportionally
+    to_take = shortfall
+    # first pass proportional
+    for d in donors:
+        share = w[d] / avail_total if avail_total > 0 else 0
+        take_d = to_take * share
+        w[d] = max(0.0, w[d] - take_d)
+
+    # correction: due to floors/rounds, recompute remaining
+    rem2 = remaining_points(w)
+    missing = max(0.0, shortfall - rem2)
+    if missing > 1e-6:
+        # small second pass: take evenly from donors with leftover >0
+        donors_left = [d for d in donors if w[d] > 0]
+        if donors_left:
+            step = missing / len(donors_left)
+            for d in donors_left:
+                w[d] = max(0.0, w[d] - step)
+
+    # increase target by needed
+    w[target] = min(100.0, w[target] + needed)
+    return w, True, ""
+
+def reset_pending():
+    st.session_state.pending_target = None
+    st.session_state.pending_needed = 0.0
+    st.session_state.pending_selection = []
 
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str):
     creds = {
@@ -134,12 +187,7 @@ if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
     defaults = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    s = sum(defaults.values())
-    if s > 0:
-        defaults = {k: 100.0 * v / s for k, v in defaults.items()}
-    else:
-        eq = 100.0 / max(1, len(indicators))
-        defaults = {k: eq for k in indicators}
+    defaults = normalize_to_100(defaults)
     st.session_state.defaults = {k: round(v, 2) for k, v in defaults.items()}
     st.session_state.weights = dict(st.session_state.defaults)
 else:
@@ -148,30 +196,31 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation")
 
-# Top bar: email | total | reset
+# Top bar: email | remaining | reset
 c1, c2, c3 = st.columns([1.2, 1, 1])
 with c1:
     st.session_state.email = st.text_input("Email (identifier)", value=st.session_state.email, placeholder="name@example.org")
 with c2:
-    total = float(sum(st.session_state.weights.values()))
-    st.markdown(f"<span class='badge'>Total</span> <strong>{total:.0f} / {TOTAL_POINTS}</strong>", unsafe_allow_html=True)
+    rem = remaining_points(st.session_state.weights)
+    st.markdown(f"<span class='badge'>Remaining</span> <strong>{rem:.0f}</strong>", unsafe_allow_html=True)
 with c3:
     if st.button("Reset to averages"):
         st.session_state.weights = dict(st.session_state.defaults)
+        reset_pending()
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
-# Rows: –10 | number_input | +10  (sin st.rerun)
+# Rows: –10 | number_input | +10  (no auto-rebalance; donor tray when needed)
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
 
     with colL:
+        # −10: always allowed (it frees points)
         if st.button("−10", key=f"m10_{comp}"):
-            st.session_state.weights = rebalance_keep_total(
-                st.session_state.weights, comp, st.session_state.weights[comp] - STEP_BIG
-            )
+            st.session_state.weights[comp] = max(0.0, st.session_state.weights[comp] - STEP_BIG)
+            reset_pending()
 
     with colC:
         with st.container():
@@ -182,15 +231,42 @@ for comp in indicators:
                 min_value=0, max_value=100, step=1, label_visibility="collapsed"
             )
             st.markdown("</div>", unsafe_allow_html=True)
-            # apply manual edit (no rerun explicit)
             if float(new_val) != st.session_state.weights[comp]:
-                st.session_state.weights = rebalance_keep_total(st.session_state.weights, comp, float(new_val))
+                st.session_state.weights = apply_manual_set(st.session_state.weights, comp, float(new_val))
 
     with colR:
-        if st.button("+10", key=f"p10_{comp}"):
-            st.session_state.weights = rebalance_keep_total(
-                st.session_state.weights, comp, st.session_state.weights[comp] + STEP_BIG
-            )
+        # +10: allowed only if remaining >= 10, otherwise open donor tray
+        can_add = remaining_points(st.session_state.weights) >= STEP_BIG
+        if st.button("+10", key=f"p10_{comp}", disabled=False):
+            st.session_state.weights = apply_delta(st.session_state.weights, comp, STEP_BIG)
+
+    # Donor tray (inline) if this is the pending target
+    if st.session_state.pending_target == comp and st.session_state.pending_needed > 0:
+        st.markdown(f"<div class='donor-tray'>", unsafe_allow_html=True)
+        st.write(f"**Take {int(st.session_state.pending_needed)} points from:**")
+        # donor candidates sorted by size desc
+        candidates = [k for k in indicators if k != comp]
+        donors_sorted = sorted(candidates, key=lambda k: st.session_state.weights[k], reverse=True)
+        default_sel = [d for d in st.session_state.pending_selection if d in donors_sorted]
+        picked = st.multiselect("Donors", donors_sorted, default=default_sel, key=f"donors_{comp}")
+        colA, colB = st.columns([1,1])
+        with colA:
+            if st.button("Apply transfer", key=f"apply_{comp}"):
+                new_w, ok, msg = try_apply_donor_transfer(
+                    st.session_state.weights,
+                    comp,
+                    float(st.session_state.pending_needed),
+                    picked
+                )
+                if ok:
+                    st.session_state.weights = new_w
+                    reset_pending()
+                else:
+                    st.warning(msg)
+        with colB:
+            if st.button("Cancel", key=f"cancel_{comp}"):
+                reset_pending()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # Footer
 st.markdown("<hr/>", unsafe_allow_html=True)
@@ -207,4 +283,4 @@ with left:
         except Exception as e:
             st.error(f"Error saving your response. {e}")
 with right:
-    st.caption("Adjust values using −10 / +10 or the central field. The total always stays at 100.")
+    st.caption("Start from averages. Increase using +10 or typing; if no points remain, pick donors explicitly.")
