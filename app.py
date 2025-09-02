@@ -51,7 +51,8 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   left: 50%;
   transform: translateX(-50%);
   bottom: 12px;
-  width: min(720px, 92vw);
+  width: 75vw;
+  max-width: 720px;
   background: rgba(255,255,255,.9);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
