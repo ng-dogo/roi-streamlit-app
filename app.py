@@ -405,6 +405,7 @@ with left:
                     st.session_state.saving = True
                     st.session_state.status = "saving"
                     try:
+                        # dentro del bloque try donde guardás en Sheets:
                         save_to_sheet(
                             st.session_state.email.strip(),
                             st.session_state.weights,
@@ -412,10 +413,10 @@ with left:
                             indicator_order=indicators
                         )
                         st.session_state.last_payload_hash = ph
-                        st.session_state.submitted = True
-                        st.session_state.status = "saved"
-                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
-                        st.toast("Saved. Thank you!", icon="✅")
+                        st.session_state.submitted = True            # <- clave para fijar el estado
+                        st.session_state.status = "saved"            # mantenemos por compatibilidad
+                        #st.session_state.thanks_expire = time.time() + 3600  # opcional, por si querés un timeout largo
+                        st.toast("Submitted. Thank you!", icon="✅")
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
