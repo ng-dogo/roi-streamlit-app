@@ -31,23 +31,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   cursor:default;
 }
 .center input[type=number]{text-align:center;font-weight:600}
-
-/* 🔧 Mejora focus/tap de los number inputs (evita "rojo") */
-.center input[type=number]{
-  outline:none !important; box-shadow:none !important; -webkit-tap-highlight-color: transparent;
-}
-.center input[type=number]:focus,
-.center input[type=number]:active{
-  outline:none !important;
-  box-shadow:0 0 0 2px rgba(14,124,102,.15) !important;
-}
-
-/* 🔧 Spin buttons WebKit más cómodos al tacto */
-.center input[type=number]::-webkit-inner-spin-button,
-.center input[type=number]::-webkit-outer-spin-button{
-  opacity:1; height:28px; width:28px; margin:0 2px; background:transparent;
-}
-
 .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
@@ -65,10 +48,10 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 /* — HUD flotante inferior (Opción A) — */
 .hud {
   position: fixed;
-  left: 12px;
-  bottom: 12px;
-  width: 65vw;
-  max-width: 720px;
+  left: 12px;        /* pegado a la izquierda */
+  bottom: 12px;      /* separación del borde inferior */
+  width: 65vw;       /* ocupa 3/4 del ancho de la pantalla */
+  max-width: 720px;  /* opcional, límite máximo */
   background: rgba(255,255,255,.9);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
@@ -77,6 +60,8 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   padding: .5rem .75rem;
   z-index: 9999;
 }
+
+.dark .hud { background: rgba(28,28,28,.85) }
 
 .hud-row{ display:flex; align-items:center; gap:.75rem }
 .hud-mono{ font-variant-numeric: tabular-nums; font-weight:600 }
@@ -101,6 +86,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 @media (max-width: 480px){
   .hud { bottom: 8px; padding: .45rem .6rem }
 }
+
 @media (prefers-color-scheme: dark){
   .hud{
     background: rgba(18,18,18,.85);
@@ -108,34 +94,21 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   }
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
+  /* opcional: si tu brand es muy oscuro en dark, podés aclararlo un toque */
+  /* .hud-fill{ background: #0fb58f; } */
 }
 
-/* 🎯 Botones +/− específicos de cada fila (grandes y táctiles) */
-.stepper { display:flex; align-items:center; justify-content:center }
-.stepper .stButton>button{
-  -webkit-appearance:none; appearance:none;
-  border:1px solid var(--border); background:#fff;
-  padding:.4rem .6rem; border-radius:12px; font-weight:800;
-  min-width:44px; min-height:40px; line-height:1; text-align:center;
-  transition: transform .04s ease, box-shadow .12s ease, background .12s ease;
-  color:#0b3941;
-}
-.stepper .stButton>button:active{ transform: translateY(1px) scale(0.98); }
-@media (prefers-color-scheme: dark){
-  .stepper .stButton>button{ background:#121212; color:#f2f2f2; border-color:rgba(255,255,255,.14); }
-  .stepper .stButton>button:hover{ filter:brightness(1.08) }
-}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
-CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")
-TOTAL_POINTS = 1.0
+CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
+TOTAL_POINTS = 1.0  # pesos suman 1.00
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
 THANKS_VISIBLE_SEC = 3.0
-EPS = 1e-6
+EPS = 1e-6  # tolerancia numérica
 
 # ───────── STATE ─────────
 if "session_id" not in st.session_state:
@@ -174,10 +147,12 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(0.0, 1.0).fillna(0.0)
+    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
+    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     return out
 
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
+    """Redondea a 0.01 manteniendo suma exacta = 1.00 (en centésimas)."""
     if not weights:
         return {}
     total = float(sum(weights.values()))
@@ -258,18 +233,6 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
             time.sleep(delay)
             delay *= 2
 
-# ➕ Ajuste fino con paso 0.01 mediante botones +/−
-def adjust_small(comp: str, delta: float = 0.01):
-    cur = float(st.session_state.weights[comp])
-    if delta > 0:
-        allowed = min(delta, max(0.0, remaining_points(st.session_state.weights)))
-        new_val = min(1.0, cur + allowed)
-    else:
-        new_val = max(0.0, cur + delta)
-    new_val = float(np.round(new_val, 2))
-    st.session_state.weights[comp] = new_val
-    st.session_state[f"num_{comp}"] = new_val
-
 # ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
@@ -291,7 +254,7 @@ st.session_state.email = st.text_input("Email", value=st.session_state.email, pl
 # Línea suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Reset arriba a la derecha
+# Reset (dejamos el botón arriba; REMOVIDA la barra st.progress para no duplicar)
 right_align = st.columns([3,1])[1]
 with right_align:
     if st.button("Reset to averages", disabled=st.session_state.saving):
@@ -310,26 +273,19 @@ if st.session_state.get("_init_inputs"):
 
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    # Layout: −  [ number_input ]  +
-    c1, c2, c3 = st.columns([1,3,1])
-    with c1:
-        st.markdown('<div class="stepper">', unsafe_allow_html=True)
-        st.button("−", key=f"minus_{comp}", on_click=lambda c=comp: adjust_small(c, -0.01), disabled=st.session_state.saving)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-        st.number_input(
-            label="", key=f"num_{comp}",
-            min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
-            label_visibility="collapsed",
-            on_change=make_on_change(comp),
-            disabled=st.session_state.saving
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-    with c3:
-        st.markdown('<div class="stepper">', unsafe_allow_html=True)
-        st.button("+", key=f"plus_{comp}", on_click=lambda c=comp: adjust_small(c, +0.01), disabled=st.session_state.saving)
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
+    st.number_input(
+        label="",
+        key=f"num_{comp}",
+        min_value=0.0,
+        max_value=1.0,
+        step=0.01,
+        format="%.2f",
+        label_visibility="collapsed",
+        on_change=make_on_change(comp),
+        disabled=st.session_state.saving
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
@@ -370,6 +326,7 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     </div>
     """, unsafe_allow_html=True)
 
+# Calculamos métricas y pintamos HUD (sin usar st.progress)
 used = float(sum(st.session_state.weights.values()))
 rem = remaining_points(st.session_state.weights)
 pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
@@ -384,7 +341,7 @@ cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 disabled_submit = (
     (not ok_email)
     or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)
+    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00
     or st.session_state.saving
     or cooling
 )
