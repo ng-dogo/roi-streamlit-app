@@ -15,16 +15,22 @@ st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layo
 
 CSS = """
 <style>
-:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); }
+:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --bg:#0b0b0c; --border:rgba(127,127,127,.18); }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
 .main .block-container{max-width:860px}
 hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
-.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid rgba(127,127,127,.25);font-size:.8rem;color:var(--muted)}
 .name{font-weight:600;margin:.35rem 0 .25rem}
-.rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid rgba(127,127,127,.18);}
+.rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:disabled{background:#bbb;color:#fff}
 .center input[type=number]{text-align:center;font-weight:600}
+
+/* Remaining meter */
+.meter-wrap{display:flex;align-items:center;gap:.75rem}
+.meter{position:relative;flex:1;height:12px;border-radius:999px;background:linear-gradient(180deg,#e9ecef,#dfe3e6);overflow:hidden;border:1px solid rgba(0,0,0,.06)}
+.meter>span{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:linear-gradient(90deg,#0E7C66,#10a37f)}
+.meter-labels{display:flex;gap:1rem;font-size:.9rem;color:var(--muted)}
+.meter-strong{font-weight:700;color:#1f2937}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -34,8 +40,8 @@ CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: ind
 TOTAL_POINTS = 100
 STEP_BIG = 10
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-SUBMISSION_COOLDOWN_SEC = 2.0  # anti-spam server-side
-THANKS_VISIBLE_SEC = 3.0       # cuánto tiempo mostrar el "Saved. Thank you."
+SUBMISSION_COOLDOWN_SEC = 2.0
+THANKS_VISIBLE_SEC = 3.0
 
 # ───────── STATE ─────────
 if "session_id" not in st.session_state:
@@ -176,13 +182,31 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation")
 
-# Top bar
-c1, c2, c3 = st.columns([1.2, 1, 1])
+# Top bar: Email | Remaining meter | Reset
+c1, c2, c3 = st.columns([1.2, 1.4, .8])
 with c1:
-    st.session_state.email = st.text_input("Email (identifier)", value=st.session_state.email, placeholder="name@example.org")
+    # 👉 Etiqueta limpia: "Email"
+    st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
+
 with c2:
+    # 👉 Barra de progreso de Remaining (lindo y claro)
     rem = remaining_points(st.session_state.weights)
-    st.markdown(f"<span class='badge'>Remaining</span> <strong>{rem}</strong>", unsafe_allow_html=True)
+    used = TOTAL_POINTS - rem
+    pct_used = max(0, min(100, used))
+    # HTML de la barra
+    st.markdown(
+        f"""
+        <div class="meter-wrap">
+          <div class="meter"><span style="width:{pct_used}%"></span></div>
+          <div class="meter-labels">
+            <span><span class="meter-strong">{used}</span> used</span>
+            <span><span class="meter-strong">{rem}</span> remaining</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 with c3:
     if st.button("Reset to averages", disabled=st.session_state.saving):
         st.session_state.weights = dict(st.session_state.defaults)
@@ -250,32 +274,24 @@ status_box = st.empty()
 
 left, right = st.columns([1,1])
 with left:
-    if st.button("Submit",
-                 disabled=disabled_submit,
-                 help="Complete Remaining=0 y un email válido. Anti-doble clic activado."):
-
+    if st.button("Submit", disabled=disabled_submit):
         submit_lock = get_submit_lock()
-
-        # Si hay otro submit corriendo, avisamos y abortamos
         if not submit_lock.acquire(blocking=False):
             st.toast("Submission already in progress…", icon="⏳")
             st.stop()
 
         try:
-            # doble verificación de cooldown
             now2 = time.time()
             if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
                 st.session_state.status = "cooldown"
             else:
                 ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
-
                 if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
                     st.session_state.status = "duplicate"
                 else:
                     st.session_state.inflight_payload_hash = ph
                     st.session_state.saving = True
                     st.session_state.status = "saving"
-
                     try:
                         save_to_sheet(
                             st.session_state.email.strip(),
@@ -285,7 +301,6 @@ with left:
                         )
                         st.session_state.last_payload_hash = ph
                         st.session_state.submitted = True
-                        # ——— Gracias visibles + toast ———
                         st.session_state.status = "saved"
                         st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
                         st.toast("Saved. Thank you!", icon="✅")
@@ -303,7 +318,8 @@ with left:
                 pass
 
 with right:
-    st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
+    # (removido el caption informativo)
+    pass
 
 # ───────── RENDER DEL STATUS ─────────
 if st.session_state.status == "saving":
@@ -313,7 +329,6 @@ if st.session_state.status == "saving":
 
 elif st.session_state.status == "saved":
     status_box.success("Saved. Thank you.")
-    # limpiar cuando vence la ventana de gracias
     if time.time() >= st.session_state.thanks_expire:
         st.session_state.status = "idle"
 
