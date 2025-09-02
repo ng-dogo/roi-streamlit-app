@@ -33,16 +33,47 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rank td.r{text-align:right}
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* ——— iPhone fix para filas de asignación ——— */
-.alloc-row [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important; align-items:center}
-.alloc-row [data-testid="column"]{min-width:0 !important}
-/* 1ª y 3ª columna (botones) con ancho fijo; la del medio crece */
+/* ——— FIX MÓVIL / iOS: mantener 3 columnas por fila sin apilado ——— */
+.alloc-row [data-testid="stHorizontalBlock"]{
+  display:flex !important;
+  flex-direction:row !important;
+  flex-wrap:nowrap !important;
+  align-items:center;
+  gap:.5rem;
+}
+.alloc-row [data-testid="column"]{
+  min-width:0 !important;             /* deja que las columnas se encojan en Safari */
+  flex:1 1 0 !important;
+  max-width:100% !important;
+}
 .alloc-row [data-testid="column"]:nth-child(1),
-.alloc-row [data-testid="column"]:nth-child(3){flex:0 0 84px !important}
-.alloc-row [data-testid="column"]:nth-child(2){flex:1 1 auto !important; min-width:0 !important}
-.alloc-row .rowbox{width:100%; overflow:hidden}
+.alloc-row [data-testid="column"]:nth-child(3){
+  flex:0 0 92px !important;            /* ancho fijo botones */
+  max-width:92px !important;
+}
+.alloc-row [data-testid="column"]:nth-child(2){
+  flex:1 1 auto !important;            /* el input ocupa el espacio restante */
+  min-width:0 !important;
+}
 
-/* Ajustes generales en pantallas chicas (sin apilar los ±10) */
+/* Botones: evitar que intenten “romper” la fila */
+.alloc-row .stButton>button{
+  width:100% !important;               /* llenar su columna fija (92px) */
+  white-space:nowrap;
+  padding:.5rem .75rem;
+}
+
+/* Caja del input: sin overflow y centrado */
+.alloc-row .rowbox{width:100%; overflow:hidden}
+.alloc-row .rowbox .stNumberInput input{ text-align:center; font-weight:600; }
+
+/* iOS WebKit: asegura prioridad de reglas en Safari móvil */
+@supports (-webkit-touch-callout: none){
+  .alloc-row [data-testid="stHorizontalBlock"]{ gap:.5rem; }
+  .alloc-row [data-testid="column"]{ min-width:0 !important; }
+}
+
+/* Ajustes generales en pantallas chicas */
 @media (max-width:680px){
   .main .block-container{max-width:100%; padding:.6rem}
   .rank{font-size:.9rem}
@@ -51,13 +82,14 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .rank th, .rank td{padding:.25rem .35rem}
   .rank{font-size:.85rem}
   .center input[type=number]{font-size:17px}
+  .alloc-row [data-testid="column"]:nth-child(1),
+  .alloc-row [data-testid="column"]:nth-child(3){
+    flex-basis:84px !important; max-width:84px !important;   /* afina en muy angosto */
+  }
 }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
-
-
-
 
 # ───────── CONSTANTS ─────────
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
@@ -204,13 +236,13 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
-# Email (fila 1)
+# Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
 # División suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Progreso + Reset (fila 2)
+# Progreso + Reset
 col_prog, col_reset = st.columns([3, 1])
 with col_prog:
     used = int(sum(st.session_state.weights.values()))
@@ -234,7 +266,6 @@ if st.session_state.get("_init_inputs"):
 
 for comp in indicators:
     st.markdown(f"<div class='alloc-row'>", unsafe_allow_html=True)
-
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
     with colL:
@@ -253,10 +284,9 @@ for comp in indicators:
         can_add = (remaining_points(st.session_state.weights) > 0) and (int(st.session_state.weights[comp]) < 100)
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
-
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ───────── LIVE RANKING (minimal, non-intrusive) ─────────
+# ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, int]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
     rows = []
