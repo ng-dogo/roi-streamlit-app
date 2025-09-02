@@ -44,6 +44,49 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 
 /* Divisor suave entre secciones superiores */
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
+
+/* — HUD flotante inferior — */
+.hud {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  width: min(720px, 92vw);
+  background: rgba(255,255,255,.9);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.08);
+  padding: .5rem .75rem;
+  z-index: 9999;
+}
+.dark .hud { background: rgba(28,28,28,.85) }
+
+.hud-row{ display:flex; align-items:center; gap:.75rem }
+.hud-mono{ font-variant-numeric: tabular-nums; font-weight:600 }
+.hud-spacer{ flex:1 }
+
+.hud-bar{
+  position:relative;
+  height: 8px;
+  background: rgba(127,127,127,.18);
+  border-radius: 999px;
+  overflow: hidden;
+  width: 52%;
+  min-width: 140px;
+}
+.hud-fill{
+  position:absolute; left:0; top:0; bottom:0;
+  background: var(--brand);
+  width: 0%;
+}
+@media (hover:hover){
+  .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) }
+}
+@media (max-width: 480px){
+  .hud { bottom: 8px; padding: .45rem .6rem }
+}
+
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -221,6 +264,7 @@ with col_prog:
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0.0, min(1.0, used / TOTAL_POINTS if TOTAL_POINTS else 0.0))
     st.progress(pct_used, text=f"Used {used:.2f} • Remaining {rem:.2f}")
+    
 with col_reset:
     if st.button("Reset to averages", disabled=st.session_state.saving):
         st.session_state.weights = dict(st.session_state.defaults)
@@ -276,6 +320,30 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
+
+def render_floating_hud(used: float, rem: float, pct_used: float):
+    # limita 0–100% por seguridad
+    pct = max(0.0, min(1.0, pct_used)) * 100.0
+    st.markdown(f"""
+    <div class="hud">
+      <div class="hud-row">
+        <div class="hud-mono">Used {used:.2f} • Remaining {rem:.2f}</div>
+        <div class="hud-spacer"></div>
+        <div class="hud-bar">
+          <div class="hud-fill" style="width:{pct:.2f}%"></div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ya tenés estas tres variables:
+# used = float(sum(st.session_state.weights.values()))
+# rem = remaining_points(st.session_state.weights)
+# pct_used = max(0.0, min(1.0, used / TOTAL_POINTS if TOTAL_POINTS else 0.0))
+
+render_floating_hud(used, rem, pct_used)
+
+
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
