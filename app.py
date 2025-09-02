@@ -233,6 +233,8 @@ if st.session_state.get("_init_inputs"):
     st.session_state._init_inputs = False
 
 for comp in indicators:
+    st.markdown(f"<div class='alloc-row'>", unsafe_allow_html=True)
+
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
     with colL:
@@ -241,7 +243,6 @@ for comp in indicators:
                   disabled=(cur <= 0) or st.session_state.saving)
     with colC:
         st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-        # max_value fijo evita resets por cambios dinámicos de límites
         st.number_input(
             label="", key=f"num_{comp}", min_value=0, max_value=100,
             step=1, format="%d", label_visibility="collapsed",
@@ -252,6 +253,8 @@ for comp in indicators:
         can_add = (remaining_points(st.session_state.weights) > 0) and (int(st.session_state.weights[comp]) < 100)
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ───────── LIVE RANKING (minimal, non-intrusive) ─────────
 def render_ranking_html(weights: Dict[str, int]) -> None:
