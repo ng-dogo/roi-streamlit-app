@@ -23,10 +23,10 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:hover{filter:brightness(0.95)}
-/* Estilo verde oscuro cuando ya se envió */
+/* Confirmed/disabled state keeps a darker green so success is visible */
 .stButton>button:disabled{
   background:#0b6b59;
-  color:#fff; 
+  color:#fff;
   opacity:1;
   cursor:default;
 }
@@ -152,7 +152,7 @@ def get_submit_lock() -> Lock:
 def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-    sh.update("A1", [headers])  # idempotente
+    sh.update("A1", [headers])  # idempotent header
     row = [dt.datetime.now().isoformat(), email, session_id] + [int(weights[k]) for k in indicator_order] + [int(sum(weights.values()))]
     delay = 0.5
     for attempt in range(3):
@@ -165,7 +165,7 @@ def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicato
             time.sleep(delay)
             delay *= 2
 
-# ───────── LOAD DEFAULTS (una sola vez) ─────────
+# ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
@@ -182,7 +182,6 @@ st.title("RGI – Budget Allocation")
 
 # Top bar: Email | Progress | Reset
 c1, c2, c3 = st.columns([1.2, 1.6, .8])
-
 with c1:
     st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
@@ -190,7 +189,7 @@ with c2:
     used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0, min(100, used)) / 100.0
-    # Solo la barra de progreso con texto limpio
+    # Only progress bar, with clean text (lowercase)
     st.progress(pct_used, text=f"used {used} remaining {rem}")
 
 with c3:
@@ -203,13 +202,13 @@ with c3:
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
-# Inicializa los inputs la primera vez
+# Initialize number inputs on first load
 if st.session_state.get("_init_inputs"):
     for comp in indicators:
         st.session_state[f"num_{comp}"] = int(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
-# Rows de asignación
+# Rows
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
@@ -242,28 +241,17 @@ for comp in indicators:
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
 
-# ───────── LIVE RANKING ─────────
+# ───────── LIVE RANKING (table only) ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Live ranking")
 
 rank_df = pd.DataFrame({
     "Indicator": indicators,
-    "Weight": [int(st.session_state.weights[k]) for k in indicators],
+    "Weight (%)": [int(st.session_state.weights[k]) for k in indicators],
 })
-rank_df = rank_df.sort_values("Weight", ascending=False).reset_index(drop=True)
-rank_df.index = rank_df.index + 1  # ranking 1..N
-rank_df["Weight (%)"] = rank_df["Weight"]  # ya está en porcentaje del 0–100
-table_df = rank_df[["Indicator", "Weight (%)"]]
-
-view = st.radio("View", ["Table", "Bars"], horizontal=True, label_visibility="collapsed")
-
-if view == "Table":
-    # Tabla simple, compacta y legible
-    st.table(table_df)
-else:
-    # Barras horizontales legibles
-    # (Streamlit usa color por defecto del tema; no seteamos colores para mantener simpleza)
-    st.bar_chart(table_df.set_index("Indicator")["Weight"], use_container_width=True)
+rank_df = rank_df.sort_values("Weight (%)", ascending=False).reset_index(drop=True)
+rank_df.index = rank_df.index + 1  # show rank 1..N
+st.table(rank_df)
 
 # ───────── FOOTER / SUBMIT HANDLER ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
@@ -328,9 +316,9 @@ with left:
                 pass
 
 with right:
-    pass  # sin caption extra
+    pass  # no extra caption
 
-# ───────── RENDER DEL STATUS ─────────
+# ───────── STATUS RENDER ─────────
 if st.session_state.status == "saving":
     status_box.warning("Submission in progress. Please wait…")
     if not st.session_state.get("saving", False):
