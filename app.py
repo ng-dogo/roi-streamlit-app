@@ -34,6 +34,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
+.small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -192,11 +193,6 @@ with c2:
     used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0, min(100, used)) / 100.0
-    #st.markdown(
-        #f'<div class="kpis"><span class="badge"><span class="strong">{used}</span> used</span>'
-        #f'<span class="badge"><span class="strong">{rem}</span> remaining</span></div>',
-       # unsafe_allow_html=True
-    #)
     st.progress(pct_used, text=f"Used {used} • Remaining {rem}")
 
 with c3:
@@ -236,6 +232,21 @@ for comp in indicators:
         can_add = (remaining_points(st.session_state.weights) > 0) and (int(st.session_state.weights[comp]) < 100)
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
+
+# ───────── LIVE RANKING (minimal, non-intrusive) ─────────
+st.markdown("<hr/>", unsafe_allow_html=True)
+st.markdown("**Ranking (live)**")
+# Build ranking snapshot without affecting allocation state
+_sorted = sorted(st.session_state.weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
+df_rank = pd.DataFrame(_sorted, columns=["Indicator", "Points"])
+df_rank["Rank"] = np.arange(1, len(df_rank) + 1, dtype=int)
+df_rank["Share"] = (df_rank["Points"].astype(int) / TOTAL_POINTS * 100).round(0).astype(int).astype(str) + "%"
+df_rank = df_rank[["Rank", "Indicator", "Points", "Share"]]
+
+st.markdown("<div class='rowbox'>", unsafe_allow_html=True)
+st.table(df_rank)
+st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("<div class='small-note'>Snapshot updates instantly as you adjust values above.</div>", unsafe_allow_html=True)
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
