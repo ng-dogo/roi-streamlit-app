@@ -188,7 +188,7 @@ else:
     indicators = list(st.session_state.weights.keys())
 
 # ───────── UI ─────────
-st.title("RGI – Budget Allocation")
+st.title("RGI – Budget Allocation Points")
 
 # Top bar
 c1, c2, c3 = st.columns([1.2, 1.6, .8])
@@ -247,15 +247,14 @@ def render_ranking_html(weights: Dict[str, int]) -> None:
         rank += 1
     table_html = f"""
     <div class='rowbox'>
-      <div class='name'>Ranking (live)</div>
+      <div class='name'>Ranking</div>
       <table class="rank">
-        <thead><tr><th>#</th><th>Indicator</th><th>Points</th></tr></thead>
+        <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
         <tbody>
           {''.join(rows)}
         </tbody>
       </table>
     </div>
-    <div class='small-note'>Updates instantly as you adjust values above.</div>
     """
     st.markdown(table_html, unsafe_allow_html=True)
 
@@ -336,7 +335,7 @@ elif st.session_state.status == "saved":
     if time.time() >= st.session_state.thanks_expire:
         st.session_state.status = "idle"
 elif st.session_state.status == "duplicate":
-    status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
+    status_box.info("You’ve already saved this exact configuration.")
     st.session_state.status = "idle"
 elif st.session_state.status == "cooldown":
     status_box.info("Please wait a moment before submitting again.")
