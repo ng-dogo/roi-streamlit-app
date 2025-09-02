@@ -216,7 +216,7 @@ for comp in indicators:
         st.number_input(
             label="",
             key=f"num_{comp}",
-            value=int(cur),
+            #value=int(cur),
             min_value=0,
             max_value=int(max_allowed),
             step=1,
