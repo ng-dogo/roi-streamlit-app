@@ -50,7 +50,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   position: fixed;
   left: 12px;        /* pegado a la izquierda */
   bottom: 12px;      /* separación del borde inferior */
-  width: 55vw;       /* ocupa 3/4 del ancho de la pantalla */
+  width: 65vw;       /* ocupa 3/4 del ancho de la pantalla */
   max-width: 720px;  /* opcional, límite máximo */
   background: rgba(255,255,255,.9);
   backdrop-filter: blur(6px);
@@ -74,7 +74,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   border-radius: 999px;
   overflow: hidden;
   width: 52%;
-  min-width: 140px;
 }
 .hud-fill{
   position:absolute; left:0; top:0; bottom:0;
