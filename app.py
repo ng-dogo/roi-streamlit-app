@@ -50,7 +50,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   position: fixed;
   left: 12px;        /* pegado a la izquierda */
   bottom: 12px;      /* separación del borde inferior */
-  width: 75vw;       /* ocupa 3/4 del ancho de la pantalla */
+  width: 55vw;       /* ocupa 3/4 del ancho de la pantalla */
   max-width: 720px;  /* opcional, límite máximo */
   background: rgba(255,255,255,.9);
   backdrop-filter: blur(6px);
