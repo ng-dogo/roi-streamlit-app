@@ -45,7 +45,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 /* Divisor suave entre secciones superiores */
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* — HUD flotante inferior — */
+/* — HUD flotante inferior (Opción A) — */
 .hud {
   position: fixed;
   left: 50%;
@@ -86,14 +86,13 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 @media (max-width: 480px){
   .hud { bottom: 8px; padding: .45rem .6rem }
 }
-
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
-TOTAL_POINTS = 1.0  # ahora los pesos suman 1.00
+TOTAL_POINTS = 1.0  # pesos suman 1.00
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
 THANKS_VISIBLE_SEC = 3.0
@@ -136,48 +135,36 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    # El CSV ya trae valores en [0,1]; limpiamos y acotamos por las dudas
+    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
     out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     return out
 
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
-    """
-    Redondea cada valor a centésimas (paso 0.01) y ajusta mínimamente para que
-    la suma sea exactamente 1.00 (trabajando en centésimas).
-    """
+    """Redondea a 0.01 manteniendo suma exacta = 1.00 (en centésimas)."""
     if not weights:
         return {}
-
     total = float(sum(weights.values()))
     if total <= 0:
-        # fallback: reparto uniforme
         n = max(1, len(weights))
         cents_each = int(round(100 / n))
-        cents_list = [cents_each] * n
-        # corrige suma por redondeo
-        diff = 100 - sum(cents_list)
+        cents = [cents_each]*n
+        diff = 100 - sum(cents)
         for i in range(abs(diff)):
             idx = i % n
-            cents_list[idx] += 1 if diff > 0 else -1
-        return {k: v/100.0 for k, v in zip(weights.keys(), cents_list)}
-
-    # Escalamos a centésimas y redondeamos al entero más cercano
-    scaled = {k: 100.0 * (v / total) for k, v in weights.items()}  # primero reescala por si la suma != 1
+            cents[idx] += 1 if diff > 0 else -1
+        return {k: v/100.0 for k, v in zip(weights.keys(), cents)}
+    scaled = {k: 100.0 * (v / total) for k, v in weights.items()}
     rounded = {k: int(np.floor(s + 0.5)) for k, s in scaled.items()}
     resid = {k: (scaled[k] - rounded[k]) for k in weights}
-
     diff = 100 - sum(rounded.values())
     if diff > 0:
-        # necesitamos sumar 1 centésima en 'diff' lugares -> elegir mayores residuos positivos
         order = sorted(weights.keys(), key=lambda k: resid[k], reverse=True)
         for k in order[:diff]:
             rounded[k] += 1
     elif diff < 0:
-        # necesitamos restar 1 centésima en 'abs(diff)' lugares -> elegir residuos más negativos
-        order = sorted(weights.keys(), key=lambda k: resid[k])  # más negativo primero
+        order = sorted(weights.keys(), key=lambda k: resid[k])
         for k in order[:abs(diff)]:
             rounded[k] -= 1
-
     return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
@@ -193,7 +180,6 @@ def make_on_change(comp: str):
             st.session_state.weights[comp] = min(1.0, cur + allowed)
         else:
             st.session_state.weights[comp] = max(0.0, new_val)
-        # forzar a dos decimales para coherencia con step
         st.session_state.weights[comp] = float(np.round(st.session_state.weights[comp] + 1e-9, 2))
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     return _cb
@@ -239,7 +225,6 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
-    # El CSV ya viene en [0,1]; respetamos la forma y ajustamos a centésimas manteniendo suma = 1.00
     defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
     defaults_cents = round_to_cents_preserve_total(defaults_raw)
     st.session_state.defaults = defaults_cents
@@ -251,21 +236,15 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
-# Email (fila 1)
+# Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
-# División suave
+# Línea suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Progreso + Reset (fila 2)
-col_prog, col_reset = st.columns([3, 1])
-with col_prog:
-    used = float(sum(st.session_state.weights.values()))
-    rem = remaining_points(st.session_state.weights)
-    pct_used = max(0.0, min(1.0, used / TOTAL_POINTS if TOTAL_POINTS else 0.0))
-    st.progress(pct_used, text=f"Used {used:.2f} • Remaining {rem:.2f}")
-    
-with col_reset:
+# Reset (dejamos el botón arriba; REMOVIDA la barra st.progress para no duplicar)
+right_align = st.columns([3,1])[1]
+with right_align:
     if st.button("Reset to averages", disabled=st.session_state.saving):
         st.session_state.weights = dict(st.session_state.defaults)
         for comp in st.session_state.weights:
@@ -282,7 +261,6 @@ if st.session_state.get("_init_inputs"):
 
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    # Solo input central con paso 0.01 (sin botones +/-)
     st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
     st.number_input(
         label="",
@@ -297,7 +275,7 @@ for comp in indicators:
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ───────── LIVE RANKING (minimal, non-intrusive) ─────────
+# ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
     rows = []
@@ -321,8 +299,8 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
 
+# ───────── HUD FLOTANTE (Opción A) ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
-    # limita 0–100% por seguridad
     pct = max(0.0, min(1.0, pct_used)) * 100.0
     st.markdown(f"""
     <div class="hud">
@@ -336,14 +314,11 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     </div>
     """, unsafe_allow_html=True)
 
-# ya tenés estas tres variables:
-# used = float(sum(st.session_state.weights.values()))
-# rem = remaining_points(st.session_state.weights)
-# pct_used = max(0.0, min(1.0, used / TOTAL_POINTS if TOTAL_POINTS else 0.0))
-
+# Calculamos métricas y pintamos HUD (sin usar st.progress)
+used = float(sum(st.session_state.weights.values()))
+rem = remaining_points(st.session_state.weights)
+pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
 render_floating_hud(used, rem, pct_used)
-
-
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
