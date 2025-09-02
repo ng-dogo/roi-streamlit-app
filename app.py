@@ -317,7 +317,7 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     st.markdown(f"""
     <div class="hud">
       <div class="hud-row">
-        <div class="hud-mono">Used {used:.2f}/1.00</div>
+        <div class="hud-mono">Used {used:.2f}/{(used+(1-used)):.2f}</div>
         <div class="hud-spacer"></div>
         <div class="hud-bar">
           <div class="hud-fill" style="width:{pct:.2f}%"></div>
