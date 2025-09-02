@@ -15,7 +15,7 @@ st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layo
 
 CSS = """
 <style>
-:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --bg:#0b0b0c; --border:rgba(127,127,127,.18); }
+:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
 .main .block-container{max-width:860px}
 hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
@@ -24,13 +24,9 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:disabled{background:#bbb;color:#fff}
 .center input[type=number]{text-align:center;font-weight:600}
-
-/* Remaining meter */
-.meter-wrap{display:flex;align-items:center;gap:.75rem}
-.meter{position:relative;flex:1;height:12px;border-radius:999px;background:linear-gradient(180deg,#e9ecef,#dfe3e6);overflow:hidden;border:1px solid rgba(0,0,0,.06)}
-.meter>span{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:linear-gradient(90deg,#0E7C66,#10a37f)}
-.meter-labels{display:flex;gap:1rem;font-size:.9rem;color:var(--muted)}
-.meter-strong{font-weight:700;color:#1f2937}
+.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
+.kpis{display:flex;gap:1rem;align-items:center}
+.kpis .strong{font-weight:700}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -153,9 +149,7 @@ def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicato
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
     sh.update("A1", [headers])  # write idempotente
-
     row = [dt.datetime.now().isoformat(), email, session_id] + [int(weights[k]) for k in indicator_order] + [int(sum(weights.values()))]
-
     delay = 0.5
     for attempt in range(3):
         try:
@@ -182,36 +176,30 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation")
 
-# Top bar: Email | Remaining meter | Reset
-c1, c2, c3 = st.columns([1.2, 1.4, .8])
+# Top bar: Email | Used/Remaining (progress) | Reset
+c1, c2, c3 = st.columns([1.2, 1.6, .8])
 with c1:
-    # 👉 Etiqueta limpia: "Email"
     st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
 with c2:
-    # 👉 Barra de progreso de Remaining (lindo y claro)
+    used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
-    used = TOTAL_POINTS - rem
-    pct_used = max(0, min(100, used))
-    # HTML de la barra
+    pct_used = max(0, min(100, used)) / 100.0
+    # KPIs + progress (se ve bien en claro y oscuro)
     st.markdown(
-        f"""
-        <div class="meter-wrap">
-          <div class="meter"><span style="width:{pct_used}%"></span></div>
-          <div class="meter-labels">
-            <span><span class="meter-strong">{used}</span> used</span>
-            <span><span class="meter-strong">{rem}</span> remaining</span>
-          </div>
-        </div>
-        """,
+        f'<div class="kpis"><span class="badge"><span class="strong">{used}</span> used</span>'
+        f'<span class="badge"><span class="strong">{rem}</span> remaining</span></div>',
         unsafe_allow_html=True
     )
+    st.progress(pct_used, text=f"Used {used}/100 • Remaining {rem}")
 
 with c3:
     if st.button("Reset to averages", disabled=st.session_state.saving):
         st.session_state.weights = dict(st.session_state.defaults)
         for comp in st.session_state.weights:
             st.session_state[f"num_{comp}"] = int(st.session_state.weights[comp])
+        # refresca los KPIs/Progress inmediatamente
+        st.rerun()
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
@@ -279,7 +267,6 @@ with left:
         if not submit_lock.acquire(blocking=False):
             st.toast("Submission already in progress…", icon="⏳")
             st.stop()
-
         try:
             now2 = time.time()
             if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
@@ -318,31 +305,25 @@ with left:
                 pass
 
 with right:
-    # (removido el caption informativo)
-    pass
+    pass  # sin caption extra
 
 # ───────── RENDER DEL STATUS ─────────
 if st.session_state.status == "saving":
     status_box.warning("Submission in progress. Please wait…")
     if not st.session_state.get("saving", False):
         st.session_state.status = "idle"
-
 elif st.session_state.status == "saved":
     status_box.success("Saved. Thank you.")
     if time.time() >= st.session_state.thanks_expire:
         st.session_state.status = "idle"
-
 elif st.session_state.status == "duplicate":
     status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
     st.session_state.status = "idle"
-
 elif st.session_state.status == "cooldown":
     status_box.info("Please wait a moment before submitting again.")
     st.session_state.status = "idle"
-
 elif st.session_state.status == "error":
     status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
     st.session_state.status = "idle"
-
 else:
     status_box.empty()
