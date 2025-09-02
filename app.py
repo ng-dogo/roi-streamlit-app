@@ -33,46 +33,51 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rank td.r{text-align:right}
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* ——— FIX UNIVERSAL MÓVIL: 3 columnas estables con CSS Grid ———
-   Mantiene −10 | input | +10 en una sola fila en TODAS las pantallas.
-   Los laterales usan clamp para adaptarse; el input ocupa el resto.
+/* ——— FIX UNIVERSAL: Mantener columnas en 1 fila incluso en móviles ———
+   1) Nunca permitir wrap en bloques horizontales de Streamlit
+   2) Sólo cuando HAY EXACTAMENTE 3 columnas, fijar laterales (botones) a ancho estable
 */
-.alloc-row [data-testid="stHorizontalBlock"]{
-  display:grid !important;
-  grid-template-columns: clamp(64px, 20vw, 96px) minmax(0,1fr) clamp(64px, 20vw, 96px);
+[data-testid="stHorizontalBlock"]{
+  display:flex !important;
+  flex-direction:row !important;
+  flex-wrap:nowrap !important;        /* <- evita el apilado */
   align-items:center;
   column-gap:.5rem;
 }
+[data-testid="stHorizontalBlock"] > [data-testid="column"]{
+  min-width:0 !important;             /* permite encoger contenido (Safari) */
+  max-width:100% !important;
+  flex:1 1 0;                          /* por defecto, que sean flexibles */
+}
 
-/* Permitir que las columnas e hijos se encojan sin romper la fila */
-.alloc-row [data-testid="column"]{min-width:0 !important; max-width:100% !important}
-.alloc-row .rowbox{width:100%; overflow:hidden}
+/* EXACTAMENTE 3 columnas: 1ª y 3ª fijas (botones), 2ª elástica (input) */
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
+  flex:0 0 clamp(64px, 22vw, 96px) !important;
+  max-width:clamp(64px, 22vw, 96px) !important;
+}
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2):nth-last-child(2){
+  flex:1 1 auto !important;           /* input ocupa el resto */
+  min-width:0 !important;
+}
 
-/* Asegurar que el input pueda reducir su ancho en móviles */
-.alloc-row .stNumberInput, 
-.alloc-row .stNumberInput > div{width:100%}
-.alloc-row input[type=number]{width:100%; min-width:0;}
-
-/* Quitar spinners para minimizar ancho en algunos navegadores */
-.alloc-row input[type=number]::-webkit-outer-spin-button,
-.alloc-row input[type=number]::-webkit-inner-spin-button{ -webkit-appearance: none; margin:0; }
-.alloc-row input[type=number]{ -moz-appearance: textfield; }
-
-/* Botones laterales llenan su columna fija y no fuerzan wrap */
-.alloc-row .stButton>button{
+/* Botones laterales: llenar su columna y no forzar wrap */
+.stButton>button{
   width:100% !important;
   white-space:nowrap;
   padding:.5rem .6rem;
-  font-size:16px;
 }
 
-/* iOS WebKit: refuerzos de compatibilidad */
+/* Input: permitir encogerse al máximo sin romper layout */
+.stNumberInput, .stNumberInput > div{ width:100% }
+input[type=number]{ width:100%; min-width:0; }
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+input[type=number]{ -moz-appearance:textfield; }
+
+/* iOS WebKit: refuerzo */
 @supports (-webkit-touch-callout: none){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    display:grid !important;
-    grid-template-columns: clamp(64px, 22vw, 96px) minmax(0,1fr) clamp(64px, 22vw, 96px);
-  }
-  .alloc-row [data-testid="column"]{ min-width:0 !important; }
+  [data-testid="stHorizontalBlock"]{ column-gap:.5rem; }
 }
 
 /* Ajustes generales en pantallas chicas */
@@ -81,13 +86,14 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .rank{font-size:.9rem}
 }
 
-/* Afinado extra para pantallas MUY angostas (p.ej. 320px) */
+/* Ultra angosto (p.ej. 320px): reducir laterales y tipografía */
 @media (max-width:360px){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    grid-template-columns: clamp(56px, 24vw, 84px) minmax(0,1fr) clamp(56px, 24vw, 84px);
-    column-gap:.4rem;
+  [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
+  [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
+    flex-basis:clamp(52px, 24vw, 84px) !important;
+    max-width:clamp(52px, 24vw, 84px) !important;
   }
-  .alloc-row .stButton>button{ padding:.45rem .5rem; font-size:14px; }
+  .stButton>button{ padding:.45rem .5rem; font-size:14px; }
   .center input[type=number]{font-size:16px}
 }
 </style>
@@ -98,7 +104,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
 TOTAL_POINTS = 100
 STEP_BIG = 10
-EMAIL_RE = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
 THANKS_VISIBLE_SEC = 3.0
 
@@ -196,7 +202,7 @@ def get_worksheet():
     creds = {
         "type": "service_account",
         "client_email": st.secrets.gs_email,
-        "private_key": st.secrets.gs_key.replace("\\n", "\\n"),
+        "private_key": st.secrets.gs_key.replace("\\n", "\n"),
         "token_uri": "https://oauth2.googleapis.com/token",
     }
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
