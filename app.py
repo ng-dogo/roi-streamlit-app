@@ -24,30 +24,30 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.6rem 1rem;min-height:44px}
 .stButton>button:hover{filter:brightness(0.95)}
 .stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
-.center input[type=number]{text-align:center;font-weight:600;font-size:18px} /* evita zoom iOS */
+.center input[type=number]{text-align:center;font-weight:600;font-size:18px}
+
+/* Ranking */
 .rank{width:100%; border-collapse:collapse; font-size:.95rem}
 .rank th, .rank td{padding:.35rem .5rem; border-bottom:1px solid var(--border)}
 .rank th{font-weight:600; color:var(--muted); text-align:left}
 .rank td.r{text-align:right}
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* ───── Responsivo ───── */
-@media (max-width: 900px){
-  .main .block-container{max-width:700px}
-}
-@media (max-width: 680px){
+/* ——— iPhone fix para filas de asignación ——— */
+.alloc-row [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important; align-items:center}
+.alloc-row [data-testid="column"]{min-width:0 !important}
+/* 1ª y 3ª columna (botones) con ancho fijo; la del medio crece */
+.alloc-row [data-testid="column"]:nth-child(1),
+.alloc-row [data-testid="column"]:nth-child(3){flex:0 0 84px !important}
+.alloc-row [data-testid="column"]:nth-child(2){flex:1 1 auto !important; min-width:0 !important}
+.alloc-row .rowbox{width:100%; overflow:hidden}
+
+/* Ajustes generales en pantallas chicas (sin apilar los ±10) */
+@media (max-width:680px){
   .main .block-container{max-width:100%; padding:.6rem}
-
-  /* IMPORTANTE: NO apilar columnas en móvil.
-     Eliminamos la regla que hacía:
-     div[data-testid="stHorizontalBlock"] > div[data-testid="column"]{ flex:1 1 100% ... }
-     Así, −10 | [ número ] | +10 quedan en una sola fila también en móvil. */
-
-  .stButton>button{margin-top:0}            /* mantiene botones alineados */
-  .rowbox{padding:.6rem .7rem}
   .rank{font-size:.9rem}
 }
-@media (max-width: 420px){
+@media (max-width:420px){
   .rank th, .rank td{padding:.25rem .35rem}
   .rank{font-size:.85rem}
   .center input[type=number]{font-size:17px}
@@ -55,6 +55,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
+
 
 
 
