@@ -35,6 +35,7 @@ TOTAL_POINTS = 100
 STEP_BIG = 10
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0  # anti-spam server-side
+THANKS_VISIBLE_SEC = 3.0       # cuánto tiempo mostrar el "Saved. Thank you."
 
 # ───────── STATE ─────────
 if "session_id" not in st.session_state:
@@ -59,6 +60,8 @@ if "inflight_payload_hash" not in st.session_state:
     st.session_state.inflight_payload_hash = ""
 if "status" not in st.session_state:
     st.session_state.status = "idle"  # idle | saving | saved | duplicate | error | cooldown
+if "thanks_expire" not in st.session_state:
+    st.session_state.thanks_expire = 0.0
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -75,7 +78,6 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     return out
 
 def normalize_to_100_ints(weights: Dict[str, float]) -> Dict[str, int]:
-    """Escala a 100 y redondea a enteros (Hare-Niemeyer) para que sumen EXACTAMENTE 100."""
     total = float(sum(weights.values()))
     if total <= 0:
         n = max(1, len(weights))
@@ -98,7 +100,6 @@ def remaining_points(weights: Dict[str, int]) -> int:
     return int(TOTAL_POINTS - int(sum(weights.values())))
 
 def adjust(comp: str, delta: int):
-    """Sube/baja respetando 0–100 y Remaining. Sincroniza el number_input."""
     cur = int(st.session_state.weights[comp])
     if delta > 0:
         allowed = min(delta, remaining_points(st.session_state.weights))
@@ -143,7 +144,6 @@ def get_submit_lock() -> Lock:
     return Lock()
 
 def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicator_order: List[str]):
-    """Solo WRITE requests: header + append. Con retry/backoff simple."""
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
     sh.update("A1", [headers])  # write idempotente
@@ -246,7 +246,6 @@ disabled_submit = (
     or cooling
 )
 
-# único lugar donde mostramos mensajes de estado (para no dejar “pegado” nada)
 status_box = st.empty()
 
 left, right = st.columns([1,1])
@@ -257,7 +256,7 @@ with left:
 
         submit_lock = get_submit_lock()
 
-        # >>> CAMBIO 1: si el lock está ocupado, mostramos toast y abortamos este clic
+        # Si hay otro submit corriendo, avisamos y abortamos
         if not submit_lock.acquire(blocking=False):
             st.toast("Submission already in progress…", icon="⏳")
             st.stop()
@@ -286,9 +285,10 @@ with left:
                         )
                         st.session_state.last_payload_hash = ph
                         st.session_state.submitted = True
+                        # ——— Gracias visibles + toast ———
                         st.session_state.status = "saved"
-                        # >>> (Opcional) refresco inmediato para que no quede ningún banner viejo
-                        st.rerun()
+                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
+                        st.toast("Saved. Thank you!", icon="✅")
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
@@ -297,7 +297,6 @@ with left:
                         st.session_state.inflight_payload_hash = ""
                         st.session_state.last_submit_ts = time.time()
         finally:
-            # liberar siempre el lock
             try:
                 submit_lock.release()
             except Exception:
@@ -306,23 +305,29 @@ with left:
 with right:
     st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
 
-# ───────── RENDER DEL STATUS (reemplazable, no queda pegado) ─────────
+# ───────── RENDER DEL STATUS ─────────
 if st.session_state.status == "saving":
     status_box.warning("Submission in progress. Please wait…")
-    # >>> CAMBIO 2: auto-clean si no hay guardado activo
     if not st.session_state.get("saving", False):
         st.session_state.status = "idle"
+
 elif st.session_state.status == "saved":
     status_box.success("Saved. Thank you.")
-    st.session_state.status = "idle"
+    # limpiar cuando vence la ventana de gracias
+    if time.time() >= st.session_state.thanks_expire:
+        st.session_state.status = "idle"
+
 elif st.session_state.status == "duplicate":
     status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
     st.session_state.status = "idle"
+
 elif st.session_state.status == "cooldown":
     status_box.info("Please wait a moment before submitting again.")
     st.session_state.status = "idle"
+
 elif st.session_state.status == "error":
     status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
     st.session_state.status = "idle"
+
 else:
     status_box.empty()
