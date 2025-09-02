@@ -16,15 +16,17 @@ st.set_page_config(page_title="RGI – Budget Allocation Points", page_icon="⚡
 CSS = """
 <style>
 :root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
+*{ box-sizing:border-box; }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
+html, body{ max-width:100%; overflow-x:hidden; }  /* <- sin scroll lateral */
 .main .block-container{max-width:860px}
-hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
+hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
 .name{font-weight:600;margin:.35rem 0 .25rem}
 .rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.6rem 1rem;min-height:44px}
 .stButton>button:hover{filter:brightness(0.95)}
 .stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
-.center input[type=number]{text-align:center;font-weight:600;font-size:18px}
+.center input[type=number]{text-align:center;font-weight:600;font-size:18px;}
 
 /* Ranking */
 .rank{width:100%; border-collapse:collapse; font-size:.95rem}
@@ -33,68 +35,69 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rank td.r{text-align:right}
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* ——— FIX UNIVERSAL: Mantener columnas en 1 fila incluso en móviles ———
-   1) Nunca permitir wrap en bloques horizontales de Streamlit
-   2) Sólo cuando HAY EXACTAMENTE 3 columnas, fijar laterales (botones) a ancho estable
+/* ——— FIX SIN SCROLL LATERAL: Grid 3 columnas súper compacto ———
+   Laterales mínimos (no exceden el viewport); el input se encoge a 0 si hace falta.
 */
-[data-testid="stHorizontalBlock"]{
-  display:flex !important;
-  flex-direction:row !important;
-  flex-wrap:nowrap !important;        /* <- evita el apilado */
+.alloc-row{ width:100%; }
+.alloc-row [data-testid="stHorizontalBlock"]{
+  display:grid !important;
+  width:100% !important;
+  grid-template-columns: minmax(44px, 18vw) minmax(0,1fr) minmax(44px, 18vw);
   align-items:center;
-  column-gap:.5rem;
-}
-[data-testid="stHorizontalBlock"] > [data-testid="column"]{
-  min-width:0 !important;             /* permite encoger contenido (Safari) */
-  max-width:100% !important;
-  flex:1 1 0;                          /* por defecto, que sean flexibles */
+  column-gap:.45rem;
 }
 
-/* EXACTAMENTE 3 columnas: 1ª y 3ª fijas (botones), 2ª elástica (input) */
-[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
-[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
-  flex:0 0 clamp(64px, 22vw, 96px) !important;
-  max-width:clamp(64px, 22vw, 96px) !important;
-}
-[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2):nth-last-child(2){
-  flex:1 1 auto !important;           /* input ocupa el resto */
-  min-width:0 !important;
-}
+/* Columnas y contenido: nada puede forzar ancho > 100% */
+.alloc-row [data-testid="column"]{min-width:0 !important; max-width:100% !important}
+.alloc-row .rowbox{width:100%; overflow:hidden}
 
-/* Botones laterales: llenar su columna y no forzar wrap */
-.stButton>button{
+/* Input: 100% del espacio central, sin mínimos “secretos” */
+.alloc-row .stNumberInput, 
+.alloc-row .stNumberInput > div{ width:100%; min-width:0; }
+.alloc-row input[type=number]{ width:100%; min-width:0; margin:0; }
+.alloc-row input[type=number]::-webkit-outer-spin-button,
+.alloc-row input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+.alloc-row input[type=number]{ -moz-appearance:textfield; }
+
+/* Botones: ocupar su columna sin estirarse */
+.alloc-row .stButton>button{
   width:100% !important;
   white-space:nowrap;
-  padding:.5rem .6rem;
+  padding:.5rem .55rem;
+  font-size:16px;
+  line-height:1;
 }
 
-/* Input: permitir encogerse al máximo sin romper layout */
-.stNumberInput, .stNumberInput > div{ width:100% }
-input[type=number]{ width:100%; min-width:0; }
-input[type=number]::-webkit-outer-spin-button,
-input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
-input[type=number]{ -moz-appearance:textfield; }
-
-/* iOS WebKit: refuerzo */
+/* iOS WebKit: refuerzo de grid y tamaños */
 @supports (-webkit-touch-callout: none){
-  [data-testid="stHorizontalBlock"]{ column-gap:.5rem; }
+  .alloc-row [data-testid="stHorizontalBlock"]{
+    grid-template-columns: minmax(44px, 20vw) minmax(0,1fr) minmax(44px, 20vw);
+  }
 }
 
-/* Ajustes generales en pantallas chicas */
+/* Ajustes generales móviles */
 @media (max-width:680px){
   .main .block-container{max-width:100%; padding:.6rem}
   .rank{font-size:.9rem}
 }
 
-/* Ultra angosto (p.ej. 320px): reducir laterales y tipografía */
+/* Ultra angosto (≤360px): aún más compacto y menor gap */
 @media (max-width:360px){
-  [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
-  [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
-    flex-basis:clamp(52px, 24vw, 84px) !important;
-    max-width:clamp(52px, 24vw, 84px) !important;
+  .alloc-row [data-testid="stHorizontalBlock"]{
+    grid-template-columns: minmax(40px, 22vw) minmax(0,1fr) minmax(40px, 22vw);
+    column-gap:.35rem;
   }
-  .stButton>button{ padding:.45rem .5rem; font-size:14px; }
+  .alloc-row .stButton>button{ padding:.45rem .45rem; font-size:14px; }
   .center input[type=number]{font-size:16px}
+}
+
+/* Ultra-ultra angosto (≤320px): modo “compact” extremo */
+@media (max-width:320px){
+  .alloc-row [data-testid="stHorizontalBlock"]{
+    grid-template-columns: minmax(36px, 24vw) minmax(0,1fr) minmax(36px, 24vw);
+    column-gap:.3rem;
+  }
+  .alloc-row .stButton>button{ padding:.4rem .4rem; font-size:13px; letter-spacing:-.2px; }
 }
 </style>
 """
@@ -153,12 +156,7 @@ def normalize_to_100_ints(weights: Dict[str, float]) -> Dict[str, int]:
     if total <= 0:
         n = max(1, len(weights))
         base = 100 // n
-        res = 100 - base * n
-        out = {k: base for k in weights}
-        for k in list(out.keys())[:res]:
-            out[k] += 1
-        return out
-    raw = {k: 100.0 * v / total for k, v in weights.items()}
+    ...
     floors = {k: int(np.floor(x)) for k, x in raw.items()}
     leftover = 100 - sum(floors.values())
     order = sorted(raw.keys(), key=lambda k: raw[k] - floors[k], reverse=True)
@@ -202,7 +200,7 @@ def get_worksheet():
     creds = {
         "type": "service_account",
         "client_email": st.secrets.gs_email,
-        "private_key": st.secrets.gs_key.replace("\\n", "\n"),
+        "private_key": st.secrets.gs_key.replace("\\n", "\\n"),
         "token_uri": "https://oauth2.googleapis.com/token",
     }
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -245,13 +243,13 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
-# Email (fila 1)
+# Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
 # División suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Progreso + Reset (fila 2)
+# Progreso + Reset
 col_prog, col_reset = st.columns([3, 1])
 with col_prog:
     used = int(sum(st.session_state.weights.values()))
@@ -295,7 +293,7 @@ for comp in indicators:
                   disabled=(not can_add) or st.session_state.saving)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ───────── LIVE RANKING (minimal, non-intrusive) ─────────
+# ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, int]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
     rows = []
