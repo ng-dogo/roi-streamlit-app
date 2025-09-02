@@ -433,22 +433,32 @@ with right:
     pass
 
 # ───────── STATUS ─────────
-if st.session_state.status == "saving":
-    status_box.warning("Submission in progress. Please wait…")
-    if not st.session_state.get("saving", False):
-        st.session_state.status = "idle"
-elif st.session_state.status == "saved":
-    status_box.success("Saved. Thank you.")
-    if time.time() >= st.session_state.thanks_expire:
-        st.session_state.status = "idle"
-elif st.session_state.status == "duplicate":
-    status_box.info("You’ve already saved this exact configuration.")
-    st.session_state.status = "idle"
-elif st.session_state.status == "cooldown":
-    status_box.info("Please wait a moment before submitting again.")
-    st.session_state.status = "idle"
-elif st.session_state.status == "error":
-    status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
-    st.session_state.status = "idle"
+# Mostrar SIEMPRE un aviso si hay guardado en curso (más visible y estable)
+if st.session_state.get("saving", False):
+    status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
-    status_box.empty()
+    if st.session_state.status == "saving":
+        # Si por carrera quedó 'saving' pero saving=False, normalizamos
+        st.session_state.status = "idle"
+
+    elif st.session_state.status == "saved":
+        status_box.success("✅ Saved. Thank you.")
+        # mantener el mensaje unos segundos
+        if time.time() >= st.session_state.thanks_expire:
+            st.session_state.status = "idle"
+
+    elif st.session_state.status == "duplicate":
+        status_box.info("You’ve already saved this exact configuration.")
+        st.session_state.status = "idle"
+
+    elif st.session_state.status == "cooldown":
+        status_box.info("Please wait a moment before submitting again.")
+        st.session_state.status = "idle"
+
+    elif st.session_state.status == "error":
+        status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
+        st.session_state.status = "idle"
+
+    else:
+        status_box.empty()
+
