@@ -93,29 +93,49 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").fillna(0.0)
+    # El CSV ya trae valores en [0,1]; limpiamos y acotamos por las dudas
+    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     return out
 
-def normalize_to_1_hundredths(weights: Dict[str, float]) -> Dict[str, float]:
-    """Normaliza a que sumen 1.00 con dos decimales (paso 0.01)."""
+def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
+    """
+    Redondea cada valor a centésimas (paso 0.01) y ajusta mínimamente para que
+    la suma sea exactamente 1.00 (trabajando en centésimas).
+    """
+    if not weights:
+        return {}
+
     total = float(sum(weights.values()))
     if total <= 0:
+        # fallback: reparto uniforme
         n = max(1, len(weights))
-        base = 1.0 / n
-        # redondear a centésimas distribuyendo sobrantes
-        raw = {k: base for k in weights}
-    else:
-        raw = {k: (v / total) for k, v in weights.items()}
-    # escalar a enteros de centésimas
-    scaled = {k: 100.0 * v for k, v in raw.items()}
-    floors = {k: int(np.floor(x)) for k, x in scaled.items()}
-    leftover = 100 - sum(floors.values())
-    order = sorted(scaled.keys(), key=lambda k: scaled[k] - floors[k], reverse=True)
-    out_cents = floors.copy()
-    for k in order[:leftover]:
-        out_cents[k] += 1
-    # volver a decimales
-    return {k: out_cents[k] / 100.0 for k in out_cents}
+        cents_each = int(round(100 / n))
+        cents_list = [cents_each] * n
+        # corrige suma por redondeo
+        diff = 100 - sum(cents_list)
+        for i in range(abs(diff)):
+            idx = i % n
+            cents_list[idx] += 1 if diff > 0 else -1
+        return {k: v/100.0 for k, v in zip(weights.keys(), cents_list)}
+
+    # Escalamos a centésimas y redondeamos al entero más cercano
+    scaled = {k: 100.0 * (v / total) for k, v in weights.items()}  # primero reescala por si la suma != 1
+    rounded = {k: int(np.floor(s + 0.5)) for k, s in scaled.items()}
+    resid = {k: (scaled[k] - rounded[k]) for k in weights}
+
+    diff = 100 - sum(rounded.values())
+    if diff > 0:
+        # necesitamos sumar 1 centésima en 'diff' lugares -> elegir mayores residuos positivos
+        order = sorted(weights.keys(), key=lambda k: resid[k], reverse=True)
+        for k in order[:diff]:
+            rounded[k] += 1
+    elif diff < 0:
+        # necesitamos restar 1 centésima en 'abs(diff)' lugares -> elegir residuos más negativos
+        order = sorted(weights.keys(), key=lambda k: resid[k])  # más negativo primero
+        for k in order[:abs(diff)]:
+            rounded[k] -= 1
+
+    return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
@@ -176,10 +196,11 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
+    # El CSV ya viene en [0,1]; respetamos la forma y ajustamos a centésimas manteniendo suma = 1.00
     defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    defaults_norm = normalize_to_1_hundredths(defaults_raw)
-    st.session_state.defaults = defaults_norm
-    st.session_state.weights = dict(defaults_norm)
+    defaults_cents = round_to_cents_preserve_total(defaults_raw)
+    st.session_state.defaults = defaults_cents
+    st.session_state.weights = dict(defaults_cents)
     st.session_state._init_inputs = True
 else:
     indicators = list(st.session_state.weights.keys())
@@ -217,7 +238,7 @@ if st.session_state.get("_init_inputs"):
 
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    # Sólo input central con paso 0.01 (sin botones +/-10)
+    # Solo input central con paso 0.01 (sin botones +/-)
     st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
     st.number_input(
         label="",
