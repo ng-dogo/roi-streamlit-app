@@ -434,32 +434,25 @@ with right:
     pass
 
 # ───────── STATUS ─────────
-# Mostrar SIEMPRE un aviso si hay guardado en curso (más visible y estable)
+# ───────── STATUS ─────────
 if st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
-    if st.session_state.status == "saving":
-        # Si por carrera quedó 'saving' pero saving=False, normalizamos
-        st.session_state.status = "idle"
-
-    elif st.session_state.status == "saved":
-        status_box.success("✅ Saved. Thank you.")
-        # mantener el mensaje unos segundos
-        if time.time() >= st.session_state.thanks_expire:
-            st.session_state.status = "idle"
-
+    if st.session_state.submitted:
+        # Mensaje persistente tras el éxito
+        status_box.success("✅ Submitted — Thank you! Your response was saved.")
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
         st.session_state.status = "idle"
-
     elif st.session_state.status == "cooldown":
         status_box.info("Please wait a moment before submitting again.")
         st.session_state.status = "idle"
-
     elif st.session_state.status == "error":
         status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
         st.session_state.status = "idle"
-
+    elif st.session_state.status == "saved":
+        # Compatibilidad: si todavía no marcaste submitted=True por alguna razón
+        status_box.success("✅ Submitted — Thank you! Your response was saved.")
     else:
         status_box.empty()
 
