@@ -16,16 +16,26 @@ st.set_page_config(page_title="RGI – Budget Allocation Points", page_icon="⚡
 CSS = """
 <style>
 :root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
+
+/* Base */
 *{ box-sizing:border-box; }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
-html, body{ max-width:100%; overflow-x:hidden; }  /* <- sin scroll lateral */
+html, body{ max-width:100%; overflow-x:hidden; }
+
+/* Layout general */
 .main .block-container{max-width:860px}
 hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
 .name{font-weight:600;margin:.35rem 0 .25rem}
+
+/* Contenedor del input con borde */
 .rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
+
+/* Botón Streamlit */
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.6rem 1rem;min-height:44px}
 .stButton>button:hover{filter:brightness(0.95)}
 .stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
+
+/* Input centrado */
 .center input[type=number]{text-align:center;font-weight:600;font-size:18px;}
 
 /* Ranking */
@@ -35,23 +45,50 @@ hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
 .rank td.r{text-align:right}
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 
-/* ——— FIX SIN SCROLL LATERAL: Grid 3 columnas súper compacto ———
-   Laterales mínimos (no exceden el viewport); el input se encoge a 0 si hace falta.
+/* ——— BLOQUE CRÍTICO (NO APILAR + SIN SCROLL) ———
+   Forzamos que las 3 columnas (−10 | input | +10) queden en una fila.
+   Usamos anchos muy compactos y dejamos que el input se encoja.
 */
 .alloc-row{ width:100%; }
-.alloc-row [data-testid="stHorizontalBlock"]{
-  display:grid !important;
-  width:100% !important;
-  grid-template-columns: minmax(44px, 18vw) minmax(0,1fr) minmax(44px, 18vw);
+
+/* 1) Que NINGÚN stHorizontalBlock haga wrap */
+[data-testid="stHorizontalBlock"]{
+  display:flex !important;
+  flex-direction:row !important;
+  flex-wrap:nowrap !important;
   align-items:center;
-  column-gap:.45rem;
+  gap:.5rem;
+  width:100% !important;
 }
 
-/* Columnas y contenido: nada puede forzar ancho > 100% */
-.alloc-row [data-testid="column"]{min-width:0 !important; max-width:100% !important}
-.alloc-row .rowbox{width:100%; overflow:hidden}
+/* 2) Columnas: que puedan encogerse */
+[data-testid="stHorizontalBlock"] > [data-testid="column"]{
+  min-width:0 !important;
+  max-width:100% !important;
+  flex:1 1 0 !important;
+}
 
-/* Input: 100% del espacio central, sin mínimos “secretos” */
+/* 3) EXACTAMENTE 3 columnas: botones laterales fijos, input elástico */
+.alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
+.alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
+  flex:0 0 clamp(40px, 18vw, 84px) !important;  /* súper compacto */
+  max-width:clamp(40px, 18vw, 84px) !important;
+}
+.alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2):nth-last-child(2){
+  flex:1 1 auto !important;                      /* el input ocupa el resto */
+  min-width:0 !important;
+}
+
+/* 4) Botones: ocupar su columna sin estirar layout */
+.alloc-row .stButton>button{
+  width:100% !important;
+  white-space:nowrap;
+  padding:.48rem .5rem;
+  font-size:16px;             /* mantener ≥16px para evitar zoom iOS */
+  line-height:1;
+}
+
+/* 5) Input: permitir encogimiento total del campo */
 .alloc-row .stNumberInput, 
 .alloc-row .stNumberInput > div{ width:100%; min-width:0; }
 .alloc-row input[type=number]{ width:100%; min-width:0; margin:0; }
@@ -59,45 +96,40 @@ hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
 .alloc-row input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
 .alloc-row input[type=number]{ -moz-appearance:textfield; }
 
-/* Botones: ocupar su columna sin estirarse */
-.alloc-row .stButton>button{
-  width:100% !important;
-  white-space:nowrap;
-  padding:.5rem .55rem;
-  font-size:16px;
-  line-height:1;
-}
-
-/* iOS WebKit: refuerzo de grid y tamaños */
+/* iOS WebKit: refuerzo específico */
 @supports (-webkit-touch-callout: none){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    grid-template-columns: minmax(44px, 20vw) minmax(0,1fr) minmax(44px, 20vw);
-  }
+  .alloc-row [data-testid="stHorizontalBlock"]{ gap:.45rem; }
+  .alloc-row .stButton>button{ font-size:16px; } /* evita auto-zoom */
 }
 
-/* Ajustes generales móviles */
+/* Ajustes generales en pantallas chicas */
 @media (max-width:680px){
   .main .block-container{max-width:100%; padding:.6rem}
   .rank{font-size:.9rem}
 }
 
-/* Ultra angosto (≤360px): aún más compacto y menor gap */
-@media (max-width:360px){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    grid-template-columns: minmax(40px, 22vw) minmax(0,1fr) minmax(40px, 22vw);
-    column-gap:.35rem;
+/* Pantallas 360–375 px (iPhone 13 está acá): compacto cómodo */
+@media (max-width:380px){
+  .alloc-row [data-testid="stHorizontalBlock"]{ gap:.4rem; }
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
+    flex-basis: clamp(38px, 20vw, 72px) !important;
+    max-width: clamp(38px, 20vw, 72px) !important;
   }
-  .alloc-row .stButton>button{ padding:.45rem .45rem; font-size:14px; }
-  .center input[type=number]{font-size:16px}
+  .alloc-row .stButton>button{ padding:.44rem .44rem; font-size:15px; }
+  .center input[type=number]{ font-size:16px; }  /* no menos de 16px en iOS */
 }
 
-/* Ultra-ultra angosto (≤320px): modo “compact” extremo */
+/* Ultra angosto (≤320 px): modo “compact” extremo sin scroll */
 @media (max-width:320px){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    grid-template-columns: minmax(36px, 24vw) minmax(0,1fr) minmax(36px, 24vw);
-    column-gap:.3rem;
+  .alloc-row [data-testid="stHorizontalBlock"]{ gap:.34rem; }
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1):nth-last-child(3),
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3):nth-last-child(1){
+    flex-basis: clamp(34px, 22vw, 64px) !important;
+    max-width: clamp(34px, 22vw, 64px) !important;
   }
-  .alloc-row .stButton>button{ padding:.4rem .4rem; font-size:13px; letter-spacing:-.2px; }
+  .alloc-row .stButton>button{ padding:.4rem .4rem; font-size:14px; letter-spacing:-.1px; }
+  .center input[type=number]{ font-size:16px; }
 }
 </style>
 """
