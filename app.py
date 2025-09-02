@@ -15,46 +15,36 @@ st.set_page_config(page_title="RGI – Budget Allocation Points", page_icon="⚡
 
 CSS = """
 <style>
-/* Sanidad general anti-scroll */
-html, body { max-width:100%; overflow-x:hidden; }
-.alloc-row, 
-.alloc-row [data-testid="stHorizontalBlock"],
-.alloc-row [data-testid="column"] { max-width:100% !important; overflow-x:hidden; }
-
-/* Evita que títulos larguísimos ensanchen la fila */
-.alloc-row .name { word-break:break-word; overflow-wrap:anywhere; }
-
-/* Vista normal (desktop/tablet): si ya usás grid 3 cols, dejalo como está */
-
-/* ——— Fallback móvil: ≤ 380px ocultar laterales y dejar solo el input ——— */
-@media (max-width:380px){
-  .alloc-row [data-testid="stHorizontalBlock"]{
-    display:grid !important;
-    grid-template-columns: 1fr;
-    grid-template-rows: auto;
-    row-gap:.45rem;
-    column-gap:0;
-    width:100% !important;
-  }
-  /* Ocultar columna izquierda (−10) y derecha (+10) */
-  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1),
-  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3){
-    display:none !important;
-  }
-  /* El input ocupa todo el ancho */
-  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2){
-    grid-column:1;
-    min-width:0 !important;
-    max-width:100% !important;
-  }
-  /* Compactar el contenedor del input sin bajar a <16px (iOS zoom) */
-  .alloc-row .rowbox { padding:.4rem .5rem; }
-  .alloc-row .stNumberInput, .alloc-row .stNumberInput>div { width:100%; min-width:0; }
-  .alloc-row input[type=number]{ width:100%; min-width:0; font-size:16px; }
+:root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
+html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
+.main .block-container{max-width:860px}
+hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
+.name{font-weight:600;margin:.35rem 0 .25rem}
+.rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
+.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
+.stButton>button:hover{filter:brightness(0.95)}
+/* Estilo verde oscuro cuando ya se envió */
+.stButton>button:disabled{
+  background:#0b6b59;
+  color:#fff; 
+  opacity:1;
+  cursor:default;
 }
+.center input[type=number]{text-align:center;font-weight:600}
+.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
+.kpis{display:flex;gap:1rem;align-items:center}
+.kpis .strong{font-weight:700}
+
+/* Tabla ranking minimalista (no widgets) */
+.rank{width:100%; border-collapse:collapse; font-size:.95rem}
+.rank th, .rank td{padding:.35rem .5rem; border-bottom:1px solid var(--border)}
+.rank th{font-weight:600; color:var(--muted); text-align:left}
+.rank td.r{text-align:right}
+.small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
+
+/* Divisor suave entre secciones superiores */
+.soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 </style>
-
-
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
@@ -107,22 +97,19 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     return out
 
 def normalize_to_100_ints(weights: Dict[str, float]) -> Dict[str, int]:
-    """Scale arbitrary weights to integer percentages summing to 100, preserving order via largest remainders."""
     total = float(sum(weights.values()))
     if total <= 0:
         n = max(1, len(weights))
         base = 100 // n
-        rem = 100 - base * n
+        res = 100 - base * n
         out = {k: base for k in weights}
-        for k in list(out.keys())[:rem]:
+        for k in list(out.keys())[:res]:
             out[k] += 1
         return out
-    # percent weights
-    raw = {k: 100.0 * float(v) / total for k, v in weights.items()}
+    raw = {k: 100.0 * v / total for k, v in weights.items()}
     floors = {k: int(np.floor(x)) for k, x in raw.items()}
     leftover = 100 - sum(floors.values())
-    # distribute remainders
-    order = sorted(raw.keys(), key=lambda k: (raw[k] - floors[k]), reverse=True)
+    order = sorted(raw.keys(), key=lambda k: raw[k] - floors[k], reverse=True)
     out = floors.copy()
     for k in order[:leftover]:
         out[k] += 1
@@ -206,13 +193,13 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
-# Email
+# Email (fila 1)
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
 # División suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Progreso + Reset
+# Progreso + Reset (fila 2)
 col_prog, col_reset = st.columns([3, 1])
 with col_prog:
     used = int(sum(st.session_state.weights.values()))
@@ -235,7 +222,6 @@ if st.session_state.get("_init_inputs"):
     st.session_state._init_inputs = False
 
 for comp in indicators:
-    st.markdown(f"<div class='alloc-row'>", unsafe_allow_html=True)
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
     with colL:
@@ -244,6 +230,7 @@ for comp in indicators:
                   disabled=(cur <= 0) or st.session_state.saving)
     with colC:
         st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
+        # max_value fijo evita resets por cambios dinámicos de límites
         st.number_input(
             label="", key=f"num_{comp}", min_value=0, max_value=100,
             step=1, format="%d", label_visibility="collapsed",
@@ -254,9 +241,8 @@ for comp in indicators:
         can_add = (remaining_points(st.session_state.weights) > 0) and (int(st.session_state.weights[comp]) < 100)
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# ───────── LIVE RANKING ─────────
+# ───────── LIVE RANKING (minimal, non-intrusive) ─────────
 def render_ranking_html(weights: Dict[str, int]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-int(kv[1]), kv[0].lower()))
     rows = []
