@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re, uuid, datetime as dt, os
-from typing import Dict, List, Tuple
+from typing import Dict
 from google.oauth2.service_account import Credentials
 import gspread
 
@@ -22,7 +22,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:disabled{background:#bbb;color:#fff}
 .center input[type=number]{text-align:center;font-weight:600}
-.donor-tray{padding:.5rem;border-radius:10px;border:1px solid rgba(127,127,127,.25); background:transparent}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -44,14 +43,6 @@ if "email" not in st.session_state:
     st.session_state.email = ""
 if "submitted" not in st.session_state:
     st.session_state.submitted = False
-
-# donor picker transient state
-if "pending_target" not in st.session_state:
-    st.session_state.pending_target: str | None = None
-if "pending_needed" not in st.session_state:
-    st.session_state.pending_needed: float = 0.0
-if "pending_selection" not in st.session_state:
-    st.session_state.pending_selection: List[str] = []
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -77,95 +68,6 @@ def normalize_to_100(weights: Dict[str, float]) -> Dict[str, float]:
 def remaining_points(weights: Dict[str, float]) -> float:
     return TOTAL_POINTS - float(sum(weights.values()))
 
-def apply_delta(weights: Dict[str, float], comp: str, delta: float) -> Dict[str, float]:
-    """Apply +/- to a component if allowed by remaining. If not enough remaining, open donor tray."""
-    w = dict(weights)
-    rem = remaining_points(w)
-    if delta <= rem:  # we can increase directly (or always decrease)
-        w[comp] = max(0.0, min(100.0, w[comp] + delta))
-        return w
-    else:
-        # Not enough remaining: set pending donor picker for exact shortfall
-        need = delta - rem
-        st.session_state.pending_target = comp
-        st.session_state.pending_needed = float(np.ceil(need))  # work in integer points for UI clarity
-        # preselect top donors (largest weights except target)
-        donors_sorted = sorted((k for k in w if k != comp), key=lambda k: w[k], reverse=True)
-        st.session_state.pending_selection = donors_sorted[:3]
-        return w
-
-def apply_manual_set(weights: Dict[str, float], comp: str, new_val: float) -> Dict[str, float]:
-    """Set value via number_input; if needs points and remaining=0, open donor tray for the shortfall."""
-    w = dict(weights)
-    new_val = float(max(0.0, min(100.0, new_val)))
-    old = w[comp]
-    delta = new_val - old
-    if delta <= 0:
-        # freeing points is always allowed
-        w[comp] = new_val
-        return w
-    # need more points
-    rem = remaining_points(w)
-    if delta <= rem:
-        w[comp] = new_val
-        return w
-    else:
-        need = delta - rem
-        st.session_state.pending_target = comp
-        st.session_state.pending_needed = float(np.ceil(need))
-        donors_sorted = sorted((k for k in w if k != comp), key=lambda k: w[k], reverse=True)
-        st.session_state.pending_selection = donors_sorted[:3]
-        return w
-
-def try_apply_donor_transfer(weights: Dict[str, float], target: str, needed: float, donors: List[str]) -> Tuple[Dict[str, float], bool, str]:
-    """Take 'needed' points from selected donors proportionally to their current weights."""
-    if not donors:
-        return weights, False, "Select at least one donor."
-    w = dict(weights)
-    # compute current remaining (if any) to reduce the needed amount)
-    rem = remaining_points(w)
-    shortfall = max(0.0, needed - rem)  # only take what's truly missing
-    if shortfall <= 0.0:
-        # no need to take from donors; we can just increase target by 'needed'
-        w[target] = min(100.0, w[target] + needed)
-        return w, True, ""
-
-    donors = [d for d in donors if d in w and d != target]
-    if not donors:
-        return weights, False, "Invalid donors."
-
-    avail_total = sum(max(w[d], 0.0) for d in donors)
-    if avail_total < shortfall - 1e-9:
-        return weights, False, "Selected donors don't have enough points."
-
-    # take proportionally
-    to_take = shortfall
-    # first pass proportional
-    for d in donors:
-        share = w[d] / avail_total if avail_total > 0 else 0
-        take_d = to_take * share
-        w[d] = max(0.0, w[d] - take_d)
-
-    # correction: due to floors/rounds, recompute remaining
-    rem2 = remaining_points(w)
-    missing = max(0.0, shortfall - rem2)
-    if missing > 1e-6:
-        # small second pass: take evenly from donors with leftover >0
-        donors_left = [d for d in donors if w[d] > 0]
-        if donors_left:
-            step = missing / len(donors_left)
-            for d in donors_left:
-                w[d] = max(0.0, w[d] - step)
-
-    # increase target by needed
-    w[target] = min(100.0, w[target] + needed)
-    return w, True, ""
-
-def reset_pending():
-    st.session_state.pending_target = None
-    st.session_state.pending_needed = 0.0
-    st.session_state.pending_selection = []
-
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str):
     creds = {
         "type": "service_account",
@@ -186,8 +88,8 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str):
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
-    defaults = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    defaults = normalize_to_100(defaults)
+    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    defaults = normalize_to_100(defaults_raw)
     st.session_state.defaults = {k: round(v, 2) for k, v in defaults.items()}
     st.session_state.weights = dict(st.session_state.defaults)
 else:
@@ -206,72 +108,53 @@ with c2:
 with c3:
     if st.button("Reset to averages"):
         st.session_state.weights = dict(st.session_state.defaults)
-        reset_pending()
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
-# Rows: –10 | number_input | +10  (no auto-rebalance; donor tray when needed)
+# Rows: –10 | number_input (±1 nativo) | +10
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
 
+    # –10: siempre permitido (libera puntos)
     with colL:
-        # −10: always allowed (it frees points)
         if st.button("−10", key=f"m10_{comp}"):
             st.session_state.weights[comp] = max(0.0, st.session_state.weights[comp] - STEP_BIG)
-            reset_pending()
 
+    # número central: cap al máximo permitido (valor_actual + remaining)
     with colC:
         with st.container():
             st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
+            current = float(st.session_state.weights[comp])
+            # Permitimos teclear libremente, luego clamp
             new_val = st.number_input(
                 label="", key=f"num_{comp}",
-                value=int(round(st.session_state.weights[comp])),
-                min_value=0, max_value=100, step=1, label_visibility="collapsed"
+                value=int(round(current)), min_value=0, max_value=100, step=1,
+                label_visibility="collapsed"
             )
             st.markdown("</div>", unsafe_allow_html=True)
-            if float(new_val) != st.session_state.weights[comp]:
-                st.session_state.weights = apply_manual_set(st.session_state.weights, comp, float(new_val))
 
-    with colR:
-        # +10: allowed only if remaining >= 10, otherwise open donor tray
-        can_add = remaining_points(st.session_state.weights) >= STEP_BIG
-        if st.button("+10", key=f"p10_{comp}", disabled=False):
-            st.session_state.weights = apply_delta(st.session_state.weights, comp, STEP_BIG)
-
-    # Donor tray (inline) if this is the pending target
-    if st.session_state.pending_target == comp and st.session_state.pending_needed > 0:
-        st.markdown(f"<div class='donor-tray'>", unsafe_allow_html=True)
-        st.write(f"**Take {int(st.session_state.pending_needed)} points from:**")
-        # donor candidates sorted by size desc
-        candidates = [k for k in indicators if k != comp]
-        donors_sorted = sorted(candidates, key=lambda k: st.session_state.weights[k], reverse=True)
-        default_sel = [d for d in st.session_state.pending_selection if d in donors_sorted]
-        picked = st.multiselect("Donors", donors_sorted, default=default_sel, key=f"donors_{comp}")
-        colA, colB = st.columns([1,1])
-        with colA:
-            if st.button("Apply transfer", key=f"apply_{comp}"):
-                new_w, ok, msg = try_apply_donor_transfer(
-                    st.session_state.weights,
-                    comp,
-                    float(st.session_state.pending_needed),
-                    picked
-                )
-                if ok:
-                    st.session_state.weights = new_w
-                    reset_pending()
+            # Si sube, cap al máximo posible según remaining
+            if float(new_val) != current:
+                rem_now = remaining_points(st.session_state.weights)
+                if new_val > current:
+                    allowed = min(100.0, current + rem_now)
+                    st.session_state.weights[comp] = float(min(new_val, allowed))
                 else:
-                    st.warning(msg)
-        with colB:
-            if st.button("Cancel", key=f"cancel_{comp}"):
-                reset_pending()
-        st.markdown("</div>", unsafe_allow_html=True)
+                    # Si baja, liberamos puntos (siempre ok)
+                    st.session_state.weights[comp] = float(new_val)
+
+    # +10: solo permitir si hay al menos 10 libres
+    with colR:
+        can_add = remaining_points(st.session_state.weights) >= STEP_BIG
+        if st.button("+10", key=f"p10_{comp}", disabled=not can_add):
+            st.session_state.weights[comp] = min(100.0, st.session_state.weights[comp] + STEP_BIG)
 
 # Footer
 st.markdown("<hr/>", unsafe_allow_html=True)
 ok_email = bool(EMAIL_RE.match(st.session_state.email or ""))
-disabled_submit = (not ok_email) or st.session_state.submitted
+disabled_submit = (not ok_email) or st.session_state.submitted or (abs(remaining_points(st.session_state.weights)) > 1e-9)
 
 left, right = st.columns([1,1])
 with left:
@@ -283,4 +166,4 @@ with left:
         except Exception as e:
             st.error(f"Error saving your response. {e}")
 with right:
-    st.caption("Start from averages. Increase using +10 or typing; if no points remain, pick donors explicitly.")
+    st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
