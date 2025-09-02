@@ -57,6 +57,8 @@ if "last_payload_hash" not in st.session_state:
     st.session_state.last_payload_hash = ""
 if "inflight_payload_hash" not in st.session_state:
     st.session_state.inflight_payload_hash = ""
+if "status" not in st.session_state:
+    st.session_state.status = "idle"  # idle | saving | saved | duplicate | error | cooldown
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -153,7 +155,7 @@ def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicato
         try:
             sh.append_row(row, value_input_option="RAW")
             return
-        except APIError as e:
+        except APIError:
             if attempt == 2:
                 raise
             time.sleep(delay)
@@ -230,7 +232,7 @@ for comp in indicators:
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
 
-# ───────── FOOTER / SUBMIT HANDLER (con lock + idempotencia) ─────────
+# ───────── FOOTER / SUBMIT HANDLER ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 ok_email = bool(EMAIL_RE.match(st.session_state.email or ""))
 
@@ -245,33 +247,35 @@ disabled_submit = (
     or cooling
 )
 
+# único lugar donde mostramos mensajes de estado (para no dejar “pegado” nada)
+status_box = st.empty()
+
 left, right = st.columns([1,1])
 with left:
     if st.button("Submit",
                  disabled=disabled_submit,
                  help="Complete Remaining=0 y un email válido. Anti-doble clic activado."):
 
-        # Candado global para evitar ejecuciones solapadas
         submit_lock = get_submit_lock()
+
+        # si otro submit está corriendo, no spameamos mensajes; dejamos el status en 'saving'
         if not submit_lock.acquire(blocking=False):
-            st.warning("Submission in progress. Please wait…")
+            st.session_state.status = "saving"
         else:
             try:
-                # Chequeo cooldown *dentro* del handler (por si hubo multi-clic antes del rerun)
+                # doble verificación de cooldown
                 now2 = time.time()
                 if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
-                    st.info("Please wait a moment before submitting again.")
+                    st.session_state.status = "cooldown"
                 else:
-                    # Hash del payload
                     ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
 
-                    # Idempotencia: si es el mismo que está inflight o ya fue guardado, no escribimos
                     if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
-                        st.info("Ya guardaste esta misma configuración. No se duplicó.")
+                        st.session_state.status = "duplicate"
                     else:
-                        # Marcamos INFLIGHT ANTES de escribir (optimista)
                         st.session_state.inflight_payload_hash = ph
                         st.session_state.saving = True
+                        st.session_state.status = "saving"
 
                         try:
                             save_to_sheet(
@@ -282,18 +286,39 @@ with left:
                             )
                             st.session_state.last_payload_hash = ph
                             st.session_state.submitted = True
-                            st.success("Saved. Thank you.")
-                        except APIError as e:
-                            st.error(f"Error saving your response. {e}")
+                            st.session_state.status = "saved"
                         except Exception as e:
-                            st.error(f"Unexpected error. {e}")
+                            st.session_state.status = "error"
+                            st.session_state.error_msg = str(e)
                         finally:
                             st.session_state.saving = False
                             st.session_state.inflight_payload_hash = ""
-
-                        st.session_state.last_submit_ts = time.time()
+                            st.session_state.last_submit_ts = time.time()
             finally:
-                submit_lock.release()
+                # liberar siempre el lock
+                try:
+                    submit_lock.release()
+                except Exception:
+                    pass
 
 with right:
     st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
+
+# ───────── RENDER DEL STATUS (reemplazable, no queda pegado) ─────────
+if st.session_state.status == "saving":
+    status_box.warning("Submission in progress. Please wait…")
+elif st.session_state.status == "saved":
+    status_box.success("Saved. Thank you.")
+    # limpiar estado visual para que no quede nada “pegado” en la próxima recarga
+    st.session_state.status = "idle"
+elif st.session_state.status == "duplicate":
+    status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
+    st.session_state.status = "idle"
+elif st.session_state.status == "cooldown":
+    status_box.info("Please wait a moment before submitting again.")
+    st.session_state.status = "idle"
+elif st.session_state.status == "error":
+    status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
+    st.session_state.status = "idle"
+else:
+    status_box.empty()
