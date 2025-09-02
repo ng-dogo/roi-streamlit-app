@@ -31,9 +31,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   cursor:default;
 }
 .center input[type=number]{text-align:center;font-weight:600}
-.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
-.kpis{display:flex;gap:1rem;align-items:center}
-.kpis .strong{font-weight:700}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -68,7 +65,7 @@ if "last_payload_hash" not in st.session_state:
 if "inflight_payload_hash" not in st.session_state:
     st.session_state.inflight_payload_hash = ""
 if "status" not in st.session_state:
-    st.session_state.status = "idle"
+    st.session_state.status = "idle"  # idle | saving | saved | duplicate | error | cooldown
 if "thanks_expire" not in st.session_state:
     st.session_state.thanks_expire = 0.0
 
@@ -155,7 +152,7 @@ def get_submit_lock() -> Lock:
 def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-    sh.update("A1", [headers])
+    sh.update("A1", [headers])  # idempotente
     row = [dt.datetime.now().isoformat(), email, session_id] + [int(weights[k]) for k in indicator_order] + [int(sum(weights.values()))]
     delay = 0.5
     for attempt in range(3):
@@ -168,7 +165,7 @@ def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicato
             time.sleep(delay)
             delay *= 2
 
-# ───────── LOAD DEFAULTS ─────────
+# ───────── LOAD DEFAULTS (una sola vez) ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
@@ -183,8 +180,9 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation")
 
-# Top bar
+# Top bar: Email | Progress | Reset
 c1, c2, c3 = st.columns([1.2, 1.6, .8])
+
 with c1:
     st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
@@ -192,12 +190,8 @@ with c2:
     used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0, min(100, used)) / 100.0
-    #st.markdown(
-        #f'<div class="kpis"><span class="badge"><span class="strong">{used}</span> used</span>'
-        #f'<span class="badge"><span class="strong">{rem}</span> remaining</span></div>',
-       # unsafe_allow_html=True
-    #)
-    st.progress(pct_used, text=f"Used {used} • Remaining {rem}")
+    # Solo la barra de progreso con texto limpio
+    st.progress(pct_used, text=f"used {used} remaining {rem}")
 
 with c3:
     if st.button("Reset to averages", disabled=st.session_state.saving):
@@ -209,37 +203,72 @@ with c3:
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
+# Inicializa los inputs la primera vez
 if st.session_state.get("_init_inputs"):
     for comp in indicators:
         st.session_state[f"num_{comp}"] = int(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
+# Rows de asignación
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
+
     with colL:
         cur = int(st.session_state.weights[comp])
         st.button("−10", key=f"m10_{comp}", on_click=lambda c=comp: adjust(c, -STEP_BIG),
                   disabled=(cur <= 0) or st.session_state.saving)
+
     with colC:
         st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
         cur = int(st.session_state.weights[comp])
         rem_now = remaining_points(st.session_state.weights)
         max_allowed = cur + rem_now
         st.number_input(
-            label="", key=f"num_{comp}", min_value=0, max_value=int(max_allowed),
-            step=1, format="%d", label_visibility="collapsed",
-            on_change=make_on_change(comp), disabled=st.session_state.saving
+            label="",
+            key=f"num_{comp}",
+            min_value=0,
+            max_value=int(max_allowed),
+            step=1,
+            format="%d",
+            label_visibility="collapsed",
+            on_change=make_on_change(comp),
+            disabled=st.session_state.saving
         )
         st.markdown("</div>", unsafe_allow_html=True)
+
     with colR:
         can_add = (remaining_points(st.session_state.weights) > 0) and (int(st.session_state.weights[comp]) < 100)
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
 
-# ───────── FOOTER / SUBMIT ─────────
+# ───────── LIVE RANKING ─────────
+st.markdown("<hr/>", unsafe_allow_html=True)
+st.subheader("Live ranking")
+
+rank_df = pd.DataFrame({
+    "Indicator": indicators,
+    "Weight": [int(st.session_state.weights[k]) for k in indicators],
+})
+rank_df = rank_df.sort_values("Weight", ascending=False).reset_index(drop=True)
+rank_df.index = rank_df.index + 1  # ranking 1..N
+rank_df["Weight (%)"] = rank_df["Weight"]  # ya está en porcentaje del 0–100
+table_df = rank_df[["Indicator", "Weight (%)"]]
+
+view = st.radio("View", ["Table", "Bars"], horizontal=True, label_visibility="collapsed")
+
+if view == "Table":
+    # Tabla simple, compacta y legible
+    st.table(table_df)
+else:
+    # Barras horizontales legibles
+    # (Streamlit usa color por defecto del tema; no seteamos colores para mantener simpleza)
+    st.bar_chart(table_df.set_index("Indicator")["Weight"], use_container_width=True)
+
+# ───────── FOOTER / SUBMIT HANDLER ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 ok_email = bool(EMAIL_RE.match(st.session_state.email or ""))
+
 now = time.time()
 cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 
@@ -299,9 +328,9 @@ with left:
                 pass
 
 with right:
-    pass
+    pass  # sin caption extra
 
-# ───────── STATUS ─────────
+# ───────── RENDER DEL STATUS ─────────
 if st.session_state.status == "saving":
     status_box.warning("Submission in progress. Please wait…")
     if not st.session_state.get("saving", False):
@@ -311,7 +340,7 @@ elif st.session_state.status == "saved":
     if time.time() >= st.session_state.thanks_expire:
         st.session_state.status = "idle"
 elif st.session_state.status == "duplicate":
-    status_box.info("Ya guardaste esta misma configuración. No se duplicó.")
+    status_box.info("You already saved this configuration. It was not duplicated.")
     st.session_state.status = "idle"
 elif st.session_state.status == "cooldown":
     status_box.info("Please wait a moment before submitting again.")
