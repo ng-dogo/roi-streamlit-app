@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import re, uuid, datetime as dt, os, time, hashlib
 from typing import Dict, List
+from threading import Lock
 
 from google.oauth2.service_account import Credentials
 import gspread
@@ -33,7 +34,7 @@ CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: ind
 TOTAL_POINTS = 100
 STEP_BIG = 10
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-SUBMISSION_COOLDOWN_SEC = 2.0  # anti-spam
+SUBMISSION_COOLDOWN_SEC = 2.0  # anti-spam server-side
 
 # ───────── STATE ─────────
 if "session_id" not in st.session_state:
@@ -54,6 +55,8 @@ if "last_submit_ts" not in st.session_state:
     st.session_state.last_submit_ts = 0.0
 if "last_payload_hash" not in st.session_state:
     st.session_state.last_payload_hash = ""
+if "inflight_payload_hash" not in st.session_state:
+    st.session_state.inflight_payload_hash = ""
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -93,7 +96,7 @@ def remaining_points(weights: Dict[str, int]) -> int:
     return int(TOTAL_POINTS - int(sum(weights.values())))
 
 def adjust(comp: str, delta: int):
-    """Sube/baja respetando 0–100 y el pool disponible (Remaining). Sincroniza el number_input."""
+    """Sube/baja respetando 0–100 y Remaining. Sincroniza el number_input."""
     cur = int(st.session_state.weights[comp])
     if delta > 0:
         allowed = min(delta, remaining_points(st.session_state.weights))
@@ -130,28 +133,27 @@ def get_worksheet():
     }
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     client = gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
-    # open_by_key hace 1 read solo una vez por proceso gracias al cache_resource
     sh = client.open_by_key(st.secrets.sheet_id).sheet1
     return sh
 
-def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicator_order: List[str]):
-    """Solo WRITE requests: escribe header y hace append. Con retry/backoff simple."""
-    sh = get_worksheet()
+@st.cache_resource(show_spinner=False)
+def get_submit_lock() -> Lock:
+    return Lock()
 
+def save_to_sheet(email: str, weights: Dict[str, int], session_id: str, indicator_order: List[str]):
+    """Solo WRITE requests: header + append. Con retry/backoff simple."""
+    sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-    # Escribimos header por WRITE (sin leer). Idempotente e inofensivo.
-    sh.update("A1", [headers])
+    sh.update("A1", [headers])  # write idempotente
 
     row = [dt.datetime.now().isoformat(), email, session_id] + [int(weights[k]) for k in indicator_order] + [int(sum(weights.values()))]
 
-    # Retry/backoff (p.ej. si hay 429 temporales)
     delay = 0.5
     for attempt in range(3):
         try:
             sh.append_row(row, value_input_option="RAW")
             return
         except APIError as e:
-            # si persiste, re-raise en el último intento
             if attempt == 2:
                 raise
             time.sleep(delay)
@@ -162,7 +164,7 @@ if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
     defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    defaults_int = normalize_to_100_ints(defaults_raw)  # enteros que suman EXACTAMENTE 100
+    defaults_int = normalize_to_100_ints(defaults_raw)
     st.session_state.defaults = defaults_int
     st.session_state.weights = dict(defaults_int)
     st.session_state._init_inputs = True
@@ -172,7 +174,7 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation")
 
-# Top bar: email | remaining | reset
+# Top bar
 c1, c2, c3 = st.columns([1.2, 1, 1])
 with c1:
     st.session_state.email = st.text_input("Email (identifier)", value=st.session_state.email, placeholder="name@example.org")
@@ -194,7 +196,7 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = int(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
-# Rows: –10 | number_input (±1 nativo) | +10
+# Rows
 for comp in indicators:
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     colL, colC, colR = st.columns([1, 3, 1])
@@ -228,14 +230,12 @@ for comp in indicators:
         st.button("+10", key=f"p10_{comp}", on_click=lambda c=comp: adjust(c, STEP_BIG),
                   disabled=(not can_add) or st.session_state.saving)
 
-# Footer
+# ───────── FOOTER / SUBMIT HANDLER (con lock + idempotencia) ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 ok_email = bool(EMAIL_RE.match(st.session_state.email or ""))
 
-# Anti-spam: cooldown + lock + no cambios => no submit
 now = time.time()
 cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
-same_payload = payload_hash(st.session_state.email, indicators, st.session_state.weights) == st.session_state.last_payload_hash
 
 disabled_submit = (
     (not ok_email)
@@ -249,33 +249,51 @@ left, right = st.columns([1,1])
 with left:
     if st.button("Submit",
                  disabled=disabled_submit,
-                 help="Complete Remaining=0 y un email válido. Evita clics repetidos."):
+                 help="Complete Remaining=0 y un email válido. Anti-doble clic activado."):
 
-        # bloqueo inmediato para evitar doble procesamiento
-        st.session_state.saving = True
-        try:
-            # Chequeo de payload repetido (mismo email+pesos)
-            ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
-            if ph == st.session_state.last_payload_hash:
-                st.info("Ya guardaste esta misma configuración. No se duplicó.")
-            else:
-                save_to_sheet(
-                    st.session_state.email.strip(),
-                    st.session_state.weights,
-                    st.session_state.session_id,
-                    indicator_order=indicators
-                )
-                st.session_state.last_payload_hash = ph
-                st.session_state.submitted = True
-                st.success("Saved. Thank you.")
-            st.session_state.last_submit_ts = time.time()
-        except APIError as e:
-            # Mensaje claro y sin spamear
-            st.error(f"Error saving your response. {e}")
-        except Exception as e:
-            st.error(f"Unexpected error. {e}")
-        finally:
-            st.session_state.saving = False
+        # Candado global para evitar ejecuciones solapadas
+        submit_lock = get_submit_lock()
+        if not submit_lock.acquire(blocking=False):
+            st.warning("Submission in progress. Please wait…")
+        else:
+            try:
+                # Chequeo cooldown *dentro* del handler (por si hubo multi-clic antes del rerun)
+                now2 = time.time()
+                if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
+                    st.info("Please wait a moment before submitting again.")
+                else:
+                    # Hash del payload
+                    ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
+
+                    # Idempotencia: si es el mismo que está inflight o ya fue guardado, no escribimos
+                    if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
+                        st.info("Ya guardaste esta misma configuración. No se duplicó.")
+                    else:
+                        # Marcamos INFLIGHT ANTES de escribir (optimista)
+                        st.session_state.inflight_payload_hash = ph
+                        st.session_state.saving = True
+
+                        try:
+                            save_to_sheet(
+                                st.session_state.email.strip(),
+                                st.session_state.weights,
+                                st.session_state.session_id,
+                                indicator_order=indicators
+                            )
+                            st.session_state.last_payload_hash = ph
+                            st.session_state.submitted = True
+                            st.success("Saved. Thank you.")
+                        except APIError as e:
+                            st.error(f"Error saving your response. {e}")
+                        except Exception as e:
+                            st.error(f"Unexpected error. {e}")
+                        finally:
+                            st.session_state.saving = False
+                            st.session_state.inflight_payload_hash = ""
+
+                        st.session_state.last_submit_ts = time.time()
+            finally:
+                submit_lock.release()
 
 with right:
     st.caption("Start from averages. Adjust values; increases are limited by Remaining. No hidden rebalancing.")
