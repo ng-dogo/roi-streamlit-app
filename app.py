@@ -86,6 +86,18 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 @media (max-width: 480px){
   .hud { bottom: 8px; padding: .45rem .6rem }
 }
+
+@media (prefers-color-scheme: dark){
+  .hud{
+    background: rgba(18,18,18,.85);
+    border-color: rgba(255,255,255,.12);
+  }
+  .hud-mono{ color: rgba(255,255,255,.92); }
+  .hud-bar{ background: rgba(255,255,255,.15); }
+  /* opcional: si tu brand es muy oscuro en dark, podés aclararlo un toque */
+  /* .hud-fill{ background: #0fb58f; } */
+}
+
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
