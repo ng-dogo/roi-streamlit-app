@@ -192,12 +192,12 @@ with c2:
     used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0, min(100, used)) / 100.0
-    st.markdown(
-        f'<div class="kpis"><span class="badge"><span class="strong">{used}</span> used</span>'
-        f'<span class="badge"><span class="strong">{rem}</span> remaining</span></div>',
-        unsafe_allow_html=True
-    )
-    st.progress(pct_used, text=f"Used {used}/100 • Remaining {rem}")
+    #st.markdown(
+        #f'<div class="kpis"><span class="badge"><span class="strong">{used}</span> used</span>'
+        #f'<span class="badge"><span class="strong">{rem}</span> remaining</span></div>',
+       # unsafe_allow_html=True
+    #)
+    st.progress(pct_used, text=f"Used {used} • Remaining {rem}")
 
 with c3:
     if st.button("Reset to averages", disabled=st.session_state.saving):
