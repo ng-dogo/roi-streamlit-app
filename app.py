@@ -10,7 +10,7 @@ import gspread
 # ───────────────── CONFIG ─────────────────
 st.set_page_config(page_title="RGI – Budget Allocation", page_icon="⚡", layout="centered")
 
-# Dark-mode friendly CSS + hide number_input spinners
+# Minimal, dark-mode friendly CSS (no forced light backgrounds)
 CSS = """
 <style>
 html, body, [class*="css"] { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -22,16 +22,13 @@ hr { border: none; border-top: 1px solid rgba(128,128,128,.2); margin: 1rem 0; }
 .center-cell { display:flex; align-items:center; justify-content:center; }
 .value-input .stNumberInput input { text-align: center; font-weight: 600; }
 .value-input .stNumberInput { width: 8rem; }
-.value-input input[type=number]::-webkit-outer-spin-button,
-.value-input input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.value-input input[type=number] { -moz-appearance: textfield; } /* Firefox */
 .badge { display:inline-block; padding:.18rem .55rem; border-radius:999px; background: rgba(127,127,127,.15); }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ─────────────── PARAMS ───────────────
-CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # expects columns: component,weight
+CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # CSV with columns: component,weight
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # ─────────────── STATE ───────────────
@@ -40,7 +37,9 @@ if "session_id" not in st.session_state:
 if "components" not in st.session_state:
     st.session_state.components = []
 if "points" not in st.session_state:
-    st.session_state.points = {}  # comp -> int
+    st.session_state.points = {}          # comp -> int (current working values)
+if "defaults_points" not in st.session_state:
+    st.session_state.defaults_points = {} # comp -> int (original CSV averages)
 if "email" not in st.session_state:
     st.session_state.email = ""
 if "submitted" not in st.session_state:
@@ -93,7 +92,9 @@ def load_defaults(csv_path: str) -> Tuple[pd.DataFrame, str]:
 
 def init_state_from_df(df: pd.DataFrame):
     st.session_state.components = df["Component"].tolist()
-    st.session_state.points = {r.Component: int(r.Points) for r in df.itertuples()}
+    pts = {r.Component: int(r.Points) for r in df.itertuples()}
+    st.session_state.points = pts.copy()
+    st.session_state.defaults_points = pts.copy()
 
 def df_from_state() -> pd.DataFrame:
     return pd.DataFrame({
@@ -153,6 +154,10 @@ def set_exact(comp: str, new_val: int):
     st.session_state.points[comp] = int(new_val)
     _rebalance_after(comp)
 
+def reset_to_csv_averages():
+    """Restore the exact averages loaded from the CSV on app start."""
+    st.session_state.points = st.session_state.defaults_points.copy()
+
 def ensure_sheet_headers(sh, components: list):
     headers = ["timestamp", "email", "session_id"] + components
     vals = sh.get_all_values()
@@ -184,26 +189,30 @@ if not st.session_state.components:
 st.title("RGI – Budget Allocation")
 st.caption("Distribute **100 points** across the indicators. The total always stays at 100 automatically. No sliders, no locks.")
 
-email = st.text_input("Your email (required to submit)", value=st.session_state.email, placeholder="name@organization.org")
-if email != st.session_state.email:
-    st.session_state.email = email.strip()
+# Top bar: email + reset-to-defaults
+colL, colR = st.columns([2,1])
+with colL:
+    email = st.text_input("Your email (required to submit)", value=st.session_state.email, placeholder="name@organization.org")
+    if email != st.session_state.email:
+        st.session_state.email = email.strip()
+with colR:
+    st.write("")  # vertical align
+    if st.button("Reset to CSV averages", help="Restore the initial averages loaded from the CSV"):
+        reset_to_csv_averages()
 
 st.write("---")
 st.subheader("Allocation")
 
-# Rows: −10 · −1 · [single number_input] · +1 · +10
+# Rows: −10 · [number_input] · +10 (no ±1 buttons)
 for comp in st.session_state.components:
     pts = int(st.session_state.points[comp])
 
     st.markdown(f"<div class='row'><div class='name'>{comp}</div></div>", unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([0.9, 0.9, 1.6, 0.9, 0.9], vertical_alignment="center")
+    c1, c2, c3 = st.columns([1.0, 1.6, 1.0], vertical_alignment="center")
 
     with c1:
         st.button("−10", key=f"m10_{comp}", on_click=bump, args=(comp, -10))
     with c2:
-        st.button("−1",  key=f"m1_{comp}",  on_click=bump, args=(comp,  -1))
-
-    with c3:
         with st.container():
             st.markdown("<div class='center-cell value-input'>", unsafe_allow_html=True)
             new_val = st.number_input(" ", key=f"num_{comp}", value=pts, min_value=0, max_value=100, step=1,
@@ -211,10 +220,7 @@ for comp in st.session_state.components:
             st.markdown("</div>", unsafe_allow_html=True)
             if new_val != pts:
                 set_exact(comp, int(new_val))
-
-    with c4:
-        st.button("+1",  key=f"p1_{comp}",  on_click=bump, args=(comp,  +1))
-    with c5:
+    with c3:
         st.button("+10", key=f"p10_{comp}", on_click=bump, args=(comp, +10))
 
 # Totals + chart
@@ -222,19 +228,7 @@ df_view = df_from_state()
 total_now = int(df_view["Points"].sum())
 
 st.write("---")
-colA, colB = st.columns([2,1])
-with colA:
-    st.markdown(f"**Total allocated:** <span class='badge'>{total_now} / 100</span>", unsafe_allow_html=True)
-with colB:
-    if st.button("Split equally"):
-        n = len(st.session_state.components)
-        base = 100 // n
-        arr = np.array([base]*n, dtype=int)
-        for i in range(100 - base*n): arr[i] += 1
-        for c, v in zip(st.session_state.components, arr.tolist()):
-            st.session_state.points[c] = int(v)
-        df_view = df_from_state()
-
+st.markdown(f"**Total allocated:** <span class='badge'>{total_now} / 100</span>", unsafe_allow_html=True)
 st.bar_chart(df_view.set_index("Component")["Points"])
 
 st.write("---")
