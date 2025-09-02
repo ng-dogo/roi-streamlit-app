@@ -41,6 +41,9 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rank th{font-weight:600; color:var(--muted); text-align:left}
 .rank td.r{text-align:right}
 .small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
+
+/* Divisor suave entre secciones superiores */
+.soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -190,18 +193,20 @@ else:
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
-# Top bar
-c1, c2, c3 = st.columns([1.2, 1.6, .8])
-with c1:
-    st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
+# Email (fila 1)
+st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
-with c2:
+# División suave
+st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
+
+# Progreso + Reset (fila 2)
+col_prog, col_reset = st.columns([3, 1])
+with col_prog:
     used = int(sum(st.session_state.weights.values()))
     rem = remaining_points(st.session_state.weights)
     pct_used = max(0, min(100, used)) / 100.0
     st.progress(pct_used, text=f"Used {used} • Remaining {rem}")
-
-with c3:
+with col_reset:
     if st.button("Reset to averages", disabled=st.session_state.saving):
         st.session_state.weights = dict(st.session_state.defaults)
         for comp in st.session_state.weights:
@@ -225,7 +230,7 @@ for comp in indicators:
                   disabled=(cur <= 0) or st.session_state.saving)
     with colC:
         st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-        # 🔧 FIX 1: max_value fijo para evitar resets por cambios de límites
+        # max_value fijo evita resets por cambios dinámicos de límites
         st.number_input(
             label="", key=f"num_{comp}", min_value=0, max_value=100,
             step=1, format="%d", label_visibility="collapsed",
