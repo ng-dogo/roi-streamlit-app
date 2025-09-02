@@ -20,37 +20,37 @@ html, body { max-width:100%; overflow-x:hidden; }
 .alloc-row, 
 .alloc-row [data-testid="stHorizontalBlock"],
 .alloc-row [data-testid="column"] { max-width:100% !important; overflow-x:hidden; }
+
+/* Evita que títulos larguísimos ensanchen la fila */
 .alloc-row .name { word-break:break-word; overflow-wrap:anywhere; }
 
-/* ——— Compactación móvil manteniendo 3 columnas ——— */
+/* Vista normal (desktop/tablet): si ya usás grid 3 cols, dejalo como está */
+
+/* ——— Fallback móvil: ≤ 380px ocultar laterales y dejar solo el input ——— */
 @media (max-width:380px){
   .alloc-row [data-testid="stHorizontalBlock"]{
     display:grid !important;
-    /* Laterales muy chicos, centro flexible; gap mínimo */
-    grid-template-columns: clamp(34px, 20vw, 56px) minmax(0,1fr) clamp(34px, 20vw, 56px);
-    column-gap:.3rem;
-    align-items:center;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    row-gap:.45rem;
+    column-gap:0;
     width:100% !important;
   }
-  .alloc-row [data-testid="column"]{ min-width:0 !important; max-width:100% !important; }
-
-  /* Botones llenan su columna sin estirar */
-  .alloc-row .stButton>button{
-    width:100% !important;
-    white-space:nowrap;
-    padding:.4rem .4rem;
-    font-size:14px; line-height:1;
+  /* Ocultar columna izquierda (−10) y derecha (+10) */
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1),
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3){
+    display:none !important;
   }
-
-  /* Input súper angosto pero legible (16px para evitar zoom iOS) */
-  .alloc-row .rowbox { padding:.35rem .45rem; }
+  /* El input ocupa todo el ancho */
+  .alloc-row [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2){
+    grid-column:1;
+    min-width:0 !important;
+    max-width:100% !important;
+  }
+  /* Compactar el contenedor del input sin bajar a <16px (iOS zoom) */
+  .alloc-row .rowbox { padding:.4rem .5rem; }
   .alloc-row .stNumberInput, .alloc-row .stNumberInput>div { width:100%; min-width:0; }
   .alloc-row input[type=number]{ width:100%; min-width:0; font-size:16px; }
-
-  /* Por si algo “sangra”: corta horizontal */
-  .alloc-row .rowbox, 
-  .alloc-row .stNumberInput, 
-  .alloc-row input[type=number]{ overflow-x:hidden; }
 }
 </style>
 
