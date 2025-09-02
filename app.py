@@ -21,21 +21,15 @@ html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Robot
 hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .name{font-weight:600;margin:.35rem 0 .25rem}
 .rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
-.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
+.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.6rem 1rem;min-height:44px}
 .stButton>button:hover{filter:brightness(0.95)}
-/* Estilo verde oscuro cuando ya se envió */
-.stButton>button:disabled{
-  background:#0b6b59;
-  color:#fff; 
-  opacity:1;
-  cursor:default;
-}
-.center input[type=number]{text-align:center;font-weight:600}
+.stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
+.center input[type=number]{text-align:center;font-weight:600;font-size:18px} /* evita zoom en iOS */
 .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
 
-/* Tabla ranking minimalista (no widgets) */
+/* Tabla ranking minimalista */
 .rank{width:100%; border-collapse:collapse; font-size:.95rem}
 .rank th, .rank td{padding:.35rem .5rem; border-bottom:1px solid var(--border)}
 .rank th{font-weight:600; color:var(--muted); text-align:left}
@@ -44,9 +38,30 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 
 /* Divisor suave entre secciones superiores */
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
+
+/* ───── Responsivo ───── */
+@media (max-width: 900px){
+  .main .block-container{max-width:700px}
+}
+@media (max-width: 680px){
+  .main .block-container{max-width:100%; padding:.6rem}
+  /* Apilar columnas de Streamlit en móvil */
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"]{
+    flex:1 1 100% !important; width:100% !important; padding-right:0 !important;
+  }
+  .stButton>button{width:100%; margin-top:.25rem}
+  .rowbox{padding:.6rem .7rem}
+  .rank{font-size:.9rem}
+}
+@media (max-width: 420px){
+  .rank th, .rank td{padding:.25rem .35rem}
+  .rank{font-size:.85rem}
+  .center input[type=number]{font-size:17px}
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
+
 
 # ───────── CONSTANTS ─────────
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
