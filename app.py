@@ -48,11 +48,10 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 /* — HUD flotante inferior (Opción A) — */
 .hud {
   position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 12px;
-  width: 75vw;
-  max-width: 720px;
+  left: 12px;        /* pegado a la izquierda */
+  bottom: 12px;      /* separación del borde inferior */
+  width: 75vw;       /* ocupa 3/4 del ancho de la pantalla */
+  max-width: 720px;  /* opcional, límite máximo */
   background: rgba(255,255,255,.9);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border);
@@ -61,6 +60,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   padding: .5rem .75rem;
   z-index: 9999;
 }
+
 .dark .hud { background: rgba(28,28,28,.85) }
 
 .hud-row{ display:flex; align-items:center; gap:.75rem }
