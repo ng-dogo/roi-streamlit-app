@@ -5,6 +5,8 @@ import numpy as np
 import re, uuid, datetime as dt, os, time, hashlib
 from typing import Dict, List
 from threading import Lock
+import random
+
 
 from google.oauth2.service_account import Credentials
 import gspread
@@ -217,21 +219,55 @@ def get_worksheet():
 def get_submit_lock() -> Lock:
     return Lock()
 
+def _ensure_header_once(sh, headers: List[str]) -> None:
+    """Escribe encabezado solo si hace falta (tolerante a concurrencia)."""
+    try:
+        first_row = sh.row_values(1)
+        if first_row and first_row[:len(headers)] == headers:
+            return
+    except Exception:
+        # si falla la lectura por carrera, intentamos setear igual
+        pass
+    try:
+        sh.update("A1", [headers])
+    except Exception:
+        # si otra instancia ya lo escribió, ignoramos
+        pass
+
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-    sh.update("A1", [headers])
-    row = [dt.datetime.now().isoformat(), email, session_id] + [float(np.round(weights[k], 2)) for k in indicator_order] + [float(np.round(sum(weights.values()), 2))]
-    delay = 0.5
-    for attempt in range(3):
+
+    # 1) Encabezado una sola vez
+    _ensure_header_once(sh, headers)
+
+    # 2) Construir fila
+    row = (
+        [dt.datetime.now().isoformat(), email, session_id]
+        + [float(np.round(weights[k], 2)) for k in indicator_order]
+        + [float(np.round(sum(weights.values()), 2))]
+    )
+
+    # 3) Append con backoff + jitter (sin CSV local)
+    base_delay = 0.4
+    attempts = 5
+    for attempt in range(1, attempts + 1):
+        # pequeño jitter para desincronizar ráfagas
+        time.sleep(random.uniform(0.0, 0.35))
         try:
             sh.append_row(row, value_input_option="RAW")
-            return
-        except APIError:
-            if attempt == 2:
-                raise
-            time.sleep(delay)
-            delay *= 2
+            return  # éxito
+        except APIError as e:
+            if attempt == attempts:
+                # agotamos reintentos: propagamos error legible
+                raise RuntimeError(
+                    "No pudimos guardar en Google Sheets tras varios intentos. "
+                    "Por favor, esperá unos segundos y hacé un único reintento."
+                ) from e
+            # backoff exponencial acotado
+            sleep_s = min(4.0, base_delay * (2 ** (attempt - 1)))
+            time.sleep(sleep_s)
+
 
 # ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
