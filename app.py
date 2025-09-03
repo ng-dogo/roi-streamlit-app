@@ -342,10 +342,13 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
     for name, pts in ordered:
         rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
         rank += 1
-    # --- NUEVA FILA DE TOTAL (usa la suma que mostramos en el HUD / avisos) ---
-    total_used = float(sum(weights.values()))
-    rows.append(f"<tr><td></td><td><b>Total</b></td><td class='r'><b>{total_used:.2f}</b></td></tr>")
-    # ----------------------------------------------------------------------------
+
+    # --- Fila TOTAL (roja si != 1.00) ---
+    used_total = float(sum(weights.values()))
+    is_ok = abs(used_total - TOTAL_POINTS) <= EPS
+    total_row_style = "" if is_ok else " style=\"color:#b3261e;background:rgba(217,48,37,.08);\""
+    rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
+
     table_html = f"""
     <div class='rowbox'>
       <div class='name center'>Ranking</div>
