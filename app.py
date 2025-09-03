@@ -354,67 +354,46 @@ st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
 # ───────── HUD FLOTANTE (Opción A) ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
-    need_fix = abs(rem) > EPS
     pct = max(0.0, min(1.0, pct_used)) * 100.0
-
-    # estilos base del contenedor
-    base_style = (
-        "position:fixed;left:12px;bottom:12px;width:65vw;max-width:720px;"
-        "background:rgba(255,255,255,.9);backdrop-filter:blur(6px);"
-        "border:1px solid rgba(127,127,127,.18);border-radius:12px;"
-        "box-shadow:0 6px 20px rgba(0,0,0,.08);padding:.5rem .75rem;z-index:9999;"
-    )
-
-    # si no suma 1.00, forzamos borde y sombra rojiza con inline styles
-    warn_extra = "" if not need_fix else (
-        "border-color:rgba(217,48,37,.35) !important;"
-        "box-shadow:0 6px 20px rgba(217,48,37,.12) !important;"
-    )
-
-    # barrita de progreso
-    bar_style = (
-        "position:relative;height:8px;background:rgba(127,127,127,.18);"
-        "border-radius:999px;overflow:hidden;width:52%;"
-    )
-
-    fill_style = (
-        f"position:absolute;left:0;top:0;bottom:0;background:var(--brand);width:{pct:.2f}%;"
-        + ("" if not need_fix else "box-shadow:inset 0 0 0 2px rgba(217,48,37,.25);")
-    )
-
-    # mensaje “Add/Remove” si falta o sobra
-    if need_fix:
-        tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
-        msg_html = (
-            "<span style=\"font-size:.9rem;color:#d93025;margin-left:.35rem;"
-            "white-space:nowrap;font-variant-numeric:tabular-nums\">"
-            f"⚠️ Sum to 1.00 — {tip}</span>"
-        )
-    else:
-        msg_html = ""
-
-    st.markdown(
-        f"""
-        <div style="{base_style}{warn_extra}">
-          <div style="display:flex;align-items:center;gap:.75rem">
-            <div style="font-variant-numeric:tabular-nums;font-weight:600">{used:.2f}/1.00</div>
-            <div style="flex:1"></div>
-            <div style="{bar_style}">
-              <div style="{fill_style}"></div>
-            </div>
-            {msg_html}
-          </div>
+    st.markdown(f"""
+    <div class="hud">
+      <div class="hud-row">
+        <div class="hud-mono">{used:.2f}/{(used+(1-used)):.2f}</div>
+        <div class="hud-spacer"></div>
+        <div class="hud-bar">
+          <div class="hud-fill" style="width:{pct:.2f}%"></div>
         </div>
-        """,
-        unsafe_allow_html=True
-    )
-
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Calculamos métricas y pintamos HUD (sin usar st.progress)
 used = float(sum(st.session_state.weights.values()))
 rem = remaining_points(st.session_state.weights)
 pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
 render_floating_hud(used, rem, pct_used)
+
+# ───────── WARNING SI NO SUMA 1 ─────────
+used = float(sum(st.session_state.weights.values()))
+rem = remaining_points(st.session_state.weights)
+
+if abs(rem) > EPS:
+    tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
+    st.markdown(
+        f"""
+        <div style="
+            margin:.75rem 0;
+            padding:.6rem .9rem;
+            border:1px solid rgba(217,48,37,.35);
+            background:rgba(217,48,37,.08);
+            border-radius:8px;
+            font-size:.95rem;
+            color:#b3261e;">
+            ⚠️ The weights must sum to 1.00. {tip} to continue.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
