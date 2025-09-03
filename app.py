@@ -2,140 +2,121 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re, uuid, datetime as dt, os, time, hashlib
+import re, uuid, datetime as dt, os, time, hashlib, random, psutil
 from typing import Dict, List
 from threading import Lock
-import random
-import os, psutil
 
 from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import APIError
 
-# ───────── CONFIG ─────────
+# ──────────────────────────────────────────────────────────────────────────────
+# CONFIG
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="RGI – Budget Allocation Points", page_icon="⚡", layout="centered")
 
 CSS = """
 <style>
 :root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
-html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
-.main .block-container{max-width:860px}
 
-/* Espaciados compactos */
-h1, h2, h3 { margin: .25rem 0 .5rem }
-hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:.6rem 0}
+html, body, [class*="css"]{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+.main .block-container{ max-width: 860px; padding-top: 0.5rem; }
 
-/* Inputs y botones */
-.name{font-weight:600;margin:.2rem 0 .15rem}
-.rowbox{padding:.35rem .45rem;border-radius:10px;border:1px solid var(--border);}
-.center input[type=number]{text-align:center;font-weight:600}
-.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
-.stButton>button:hover{filter:brightness(0.95)}
-.stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
+/* Compacción vertical suave */
+h1, h2, h3, h4, h5, h6{ margin: .25rem 0 .35rem; }
+hr{ border:none; border-top:1px solid var(--border); margin:.5rem 0; }
+.block-container > div{ margin-top:.35rem; margin-bottom:.35rem; }
 
-/* Allocation: tarjetas en grilla 2 columnas SIEMPRE, incluso en móvil */
-.alloc-grid{ display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.2rem }
-.alloc-card{
-  display:inline-block; vertical-align:top;
-  width:calc(50% - .3rem);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:.4rem .5rem;
+/* Controles */
+.stTextInput > div > div input{ padding:.35rem .5rem; }
+.stNumberInput div[data-baseweb="input"]{ min-height: 34px; }
+.stNumberInput input{ text-align:center; font-weight:600; padding:.3rem .4rem; }
+
+/* Botones */
+.stButton>button{
+  background:var(--brand); color:#fff; border:none; border-radius:10px;
+  padding:.4rem .9rem; line-height:1; min-height:34px;
 }
-.alloc-card .name{ margin:0 0 .25rem; font-size:.95rem; font-weight:600 }
-.alloc-card .rowbox{ border:none; padding:0 }  /* evitamos doble borde */
-@media (max-width: 420px){
-  .alloc-card{ width:calc(50% - .3rem) }  /* forzamos 2 col en pantallas chicas */
-}
+.stButton>button:hover{ filter:brightness(0.95) }
+.stButton>button:disabled{ background:#0b6b59; color:#fff; opacity:1; cursor:default; }
 
-/* HUD flotante inferior (sin cambios funcionales) */
+/* Badges / notas */
+.small-note{ font-size:.9rem; color:var(--muted); margin:.25rem 0 0 }
+
+/* Filas de asignación compactas */
+.alloc-row{ padding:.25rem .4rem; border-radius:10px; border:1px solid var(--border); }
+.alloc-label{ font-weight:600; padding:.2rem 0; }
+.centered-input input{ text-align:center; }
+
+/* Ranking minimalista */
+.rank-wrap{ padding:.55rem .6rem; border:1px solid var(--border); border-radius:10px; }
+.rank-title{ font-weight:600; text-align:center; margin-bottom:.25rem; }
+.rank{ width:100%; border-collapse:collapse; font-size:.95rem; }
+.rank th, .rank td{ padding:.35rem .4rem; border-bottom:1px solid var(--border);}
+.rank th{ font-weight:600; color:var(--muted); text-align:center; }
+.rank td:first-child, .rank td:last-child{ text-align:center; }
+.rank td:nth-child(2){ text-align:left; }
+
+/* Alertas */
+.alert{
+  margin:.4rem 0; padding:.6rem .8rem; border-radius:8px; font-size:.95rem;
+  border:1px solid; display:flex; align-items:center; gap:.5rem;
+}
+.alert.red{  border-color:rgba(217,48,37,.35); background:rgba(217,48,37,.08); color:#b3261e; }
+.alert.green{border-color:rgba(12,131,61,.35); background:rgba(12,131,61,.08); color:#0b6b59; }
+
+/* HUD flotante inferior */
 .hud {
   position: fixed; left: 12px; bottom: 12px; width: 65vw; max-width: 720px;
   background: rgba(255,255,255,.9); backdrop-filter: blur(6px);
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.08);
-  padding: .5rem .75rem; z-index: 9999;
+  padding: .45rem .6rem; z-index: 9999;
 }
 .dark .hud { background: rgba(28,28,28,.85) }
-.hud-row{ display:flex; align-items:center; gap:.75rem }
-.hud-mono{ font-variant-numeric: tabular-nums; font-weight:600 }
+.hud-row{ display:flex; align-items:center; gap:.6rem }
+.hud-mono{ font-variant-numeric: tabular-nums; font-weight:700 }
 .hud-spacer{ flex:1 }
-.hud-bar{ position:relative; height:8px; background:rgba(127,127,127,.18); border-radius:999px; overflow:hidden; width:52% }
-.hud-fill{ position:absolute; left:0; top:0; bottom:0; background: var(--brand); width:0% }
-@media (hover:hover){ .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) } }
-@media (max-width: 480px){ .hud { bottom: 8px; padding: .45rem .6rem } }
-@media (prefers-color-scheme: dark){
-  .hud{ background: rgba(18,18,18,.85); border-color: rgba(255,255,255,.12); }
-  .hud-mono{ color: rgba(255,255,255,.92); }
-  .hud-bar{ background: rgba(255,255,255,.15); }
+.hud-bar{ position:relative; height:8px; background: rgba(127,127,127,.18); border-radius:999px; overflow:hidden; width:52%;}
+.hud-fill{ position:absolute; left:0; top:0; bottom:0; background: var(--brand); width:0%; }
+
+/* Forzar 2 columnas también en pantallas angostas cuando se usa el layout 2× */
+#alloc-2col [data-testid="column"]{ flex: 0 0 50% !important; width:50% !important; }
+@media (max-width: 420px){
+  /* Hacemos el input un poco más ancho en móviles */
+  .stNumberInput input{ font-size:.95rem; }
 }
-
-/* Tabla ranking minimalista */
-.rank { width:100%; border-collapse:collapse; font-size:.95rem; table-layout:fixed }
-.rank colgroup col:nth-child(1){ width:64px }
-.rank colgroup col:nth-child(3){ width:88px }
-.rank th, .rank td { padding:.35rem .5rem; border-bottom:1px solid var(--border); }
-.rank th { font-weight:600; color:var(--muted); text-align:center }
-.rank td { text-align:left }
-.rank td:first-child, .rank td:last-child { text-align:center }
-
-/* Título “Ranking” alineado con la columna “Indicator” */
-.rank thead .title-row th{ border-bottom:none; padding-bottom:.15rem }
-.rank thead .title-cell{ text-align:center; font-weight:700; color:var(--muted) }
-
-/* Avisos */
-.note-ok{
-  margin:.6rem 0 .2rem; padding:.5rem .75rem; border:1px solid rgba(12,131,44,.35);
-  background:rgba(12,131,44,.08); color:#0a7a2b; border-radius:8px; font-size:.95rem;
-}
-.note-warn{
-  margin:.6rem 0 .2rem; padding:.5rem .75rem; border:1px solid rgba(217,48,37,.35);
-  background:rgba(217,48,37,.08); color:#b3261e; border-radius:8px; font-size:.95rem;
-}
-
-/* Divisor suave */
-.soft-divider{height:0;border-top:1px solid var(--border);margin:.4rem 0 .8rem}
-
-/* Reducimos caption */
-.block-container .stCaption{ margin-top:.4rem }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
-# ───────── CONSTANTS ─────────
+# ──────────────────────────────────────────────────────────────────────────────
+# CONSTANTS
+# ──────────────────────────────────────────────────────────────────────────────
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
-TOTAL_POINTS = 1.0  # pesos suman 1.00
+TOTAL_POINTS = 1.0  # pesos deben sumar 1.00
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
-THANKS_VISIBLE_SEC = 3.0
 EPS = 1e-6  # tolerancia numérica
 
-# ───────── STATE ─────────
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-if "weights" not in st.session_state:
-    st.session_state.weights: Dict[str, float] = {}
-if "defaults" not in st.session_state:
-    st.session_state.defaults: Dict[str, float] = {}
-if "email" not in st.session_state:
-    st.session_state.email = ""
-if "submitted" not in st.session_state:
-    st.session_state.submitted = False
-if "_init_inputs" not in st.session_state:
-    st.session_state._init_inputs = False
-if "saving" not in st.session_state:
-    st.session_state.saving = False
-if "last_submit_ts" not in st.session_state:
-    st.session_state.last_submit_ts = 0.0
-if "last_payload_hash" not in st.session_state:
-    st.session_state.last_payload_hash = ""
-if "inflight_payload_hash" not in st.session_state:
-    st.session_state.inflight_payload_hash = ""
-if "status" not in st.session_state:
-    st.session_state.status = "idle"
-if "thanks_expire" not in st.session_state:
-    st.session_state.thanks_expire = 0.0
+# ──────────────────────────────────────────────────────────────────────────────
+# STATE
+# ──────────────────────────────────────────────────────────────────────────────
+ss = st.session_state
+if "session_id" not in ss: ss.session_id = str(uuid.uuid4())
+if "weights"    not in ss: ss.weights = {}            # Dict[str, float]
+if "defaults"   not in ss: ss.defaults = {}           # Dict[str, float]
+if "email"      not in ss: ss.email = ""
+if "submitted"  not in ss: ss.submitted = False
+if "_init"      not in ss: ss._init = False
+if "saving"     not in ss: ss.saving = False
+if "last_submit_ts" not in ss: ss.last_submit_ts = 0.0
+if "last_payload_hash" not in ss: ss.last_payload_hash = ""
+if "inflight_payload_hash" not in ss: ss.inflight_payload_hash = ""
+if "status"     not in ss: ss.status = "idle"
 
-# ───────── HELPERS ─────────
+# ──────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, encoding="utf-8-sig")
@@ -146,14 +127,12 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
-    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
+    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(0.0, 1.0).fillna(0.0)
     return out
 
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
     """Redondea a 0.01 manteniendo suma exacta = 1.00 (en centésimas)."""
-    if not weights:
-        return {}
+    if not weights: return {}
     total = float(sum(weights.values()))
     if total <= 0:
         n = max(1, len(weights))
@@ -170,25 +149,22 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
     diff = 100 - sum(rounded.values())
     if diff > 0:
         order = sorted(weights.keys(), key=lambda k: resid[k], reverse=True)
-        for k in order[:diff]:
-            rounded[k] += 1
+        for k in order[:diff]: rounded[k] += 1
     elif diff < 0:
         order = sorted(weights.keys(), key=lambda k: resid[k])
-        for k in order[:abs(diff)]:
-            rounded[k] -= 1
+        for k in order[:abs(diff)]: rounded[k] -= 1
     return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
 
 def make_on_change(comp: str):
-    """Versión 'suave': permite pasarse de 1.00; solo acota cada input a [0,1].
-       La validación estricta queda en el botón Submit."""
+    """Permite pasar(se) de 1.00: no limitamos en el input; sólo bloqueamos el submit si != 1."""
     def _cb():
-        new_val = float(st.session_state.get(f"num_{comp}", 0.0))
-        new_val = max(0.0, min(1.0, new_val))
-        st.session_state.weights[comp] = float(np.round(new_val + 1e-9, 2))
-        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
+        new_val = float(ss.get(f"num_{comp}", 0.0))
+        new_val = float(np.round(np.clip(new_val, 0.0, 1.0) + 1e-9, 2))
+        ss.weights[comp] = new_val
+        ss[f"num_{comp}"] = new_val
     return _cb
 
 def payload_hash(email: str, indicators: List[str], weights: Dict[str, float]) -> str:
@@ -213,11 +189,9 @@ def get_submit_lock() -> Lock:
     return Lock()
 
 def _ensure_header_once(sh, headers: List[str]) -> None:
-    """Escribe encabezado solo si hace falta (tolerante a concurrencia)."""
     try:
         first_row = sh.row_values(1)
-        if first_row and first_row[:len(headers)] == headers:
-            return
+        if first_row and first_row[:len(headers)] == headers: return
     except Exception:
         pass
     try:
@@ -228,22 +202,15 @@ def _ensure_header_once(sh, headers: List[str]) -> None:
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-
-    # 1) Encabezado una sola vez
     _ensure_header_once(sh, headers)
-
-    # 2) Fila
     row = (
         [dt.datetime.now().isoformat(), email, session_id]
         + [float(np.round(weights[k], 2)) for k in indicator_order]
         + [float(np.round(sum(weights.values()), 2))]
     )
-
-    # 3) Append con backoff + jitter
-    base_delay = 0.4
-    attempts = 5
+    base_delay, attempts = 0.4, 5
     for attempt in range(1, attempts + 1):
-        time.sleep(random.uniform(0.0, 0.35))  # jitter
+        time.sleep(random.uniform(0.0, 0.35))  # jitter anti-ráfagas
         try:
             sh.append_row(row, value_input_option="RAW")
             return
@@ -253,46 +220,26 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
                     "No pudimos guardar en Google Sheets tras varios intentos. "
                     "Por favor, esperá unos segundos y hacé un único reintento."
                 ) from e
-            sleep_s = min(4.0, base_delay * (2 ** (attempt - 1)))
-            time.sleep(sleep_s)
+            time.sleep(min(4.0, base_delay * (2 ** (attempt - 1))))
 
-# ───────── LOAD DEFAULTS ─────────
-if not st.session_state.weights:
-    df = load_defaults_csv(CSV_PATH)
-    indicators = df["indicator"].tolist()
-    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    defaults_cents = round_to_cents_preserve_total(defaults_raw)
-    st.session_state.defaults = defaults_cents
-    st.session_state.weights = dict(defaults_cents)
-    st.session_state._init_inputs = True
-else:
-    indicators = list(st.session_state.weights.keys())
+def render_ranking_html(weights: Dict[str, float]) -> None:
+    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
+    rows = []
+    for i, (name, pts) in enumerate(ordered, start=1):
+        rows.append(f"<tr><td>{i}</td><td>{name}</td><td>{float(pts):.2f}</td></tr>")
+    html = f"""
+    <div class='rank-wrap'>
+      <div class='rank-title'>Ranking</div>
+      <table class="rank">
+        <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
-# ───────── UI ─────────
-st.title("RGI – Budget Allocation Points")
-
-# Email
-st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
-
-# Línea suave + Reset a la derecha
-st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
-right_align = st.columns([3,1])[1]
-with right_align:
-    if st.button("Reset to averages", disabled=st.session_state.saving):
-        st.session_state.weights = dict(st.session_state.defaults)
-        for comp in st.session_state.weights:
-            st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
-        st.rerun()
-
-# Prepara valores iniciales de inputs si es la primera carga
-if st.session_state.get("_init_inputs"):
-    for comp in indicators:
-        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
-    st.session_state._init_inputs = False
-
-# ───────── HUD (muestra uso total) ─────────
-def render_floating_hud(used: float, rem: float, pct_used: float):
-    pct = max(0.0, min(1.0, pct_used)) * 100.0
+def render_floating_hud(used: float):
+    pct = max(0.0, min(1.0, used / TOTAL_POINTS if TOTAL_POINTS else 0.0)) * 100.0
     st.markdown(f"""
     <div class="hud">
       <div class="hud-row">
@@ -303,149 +250,171 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     </div>
     """, unsafe_allow_html=True)
 
-used = float(sum(st.session_state.weights.values()))
-rem = remaining_points(st.session_state.weights)
-pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
-render_floating_hud(used, rem, pct_used)
+# ──────────────────────────────────────────────────────────────────────────────
+# LOAD DEFAULTS
+# ──────────────────────────────────────────────────────────────────────────────
+if not ss.weights:
+    df = load_defaults_csv(CSV_PATH)
+    indicators = df["indicator"].tolist()
+    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    defaults_cents = round_to_cents_preserve_total(defaults_raw)
+    ss.defaults = defaults_cents
+    ss.weights = dict(defaults_cents)
+    ss._init = True
+else:
+    indicators = list(ss.weights.keys())
 
-# ───────── WARNING (arriba de Allocation) ─────────
+# ──────────────────────────────────────────────────────────────────────────────
+# UI
+# ──────────────────────────────────────────────────────────────────────────────
+st.title("RGI – Budget Allocation Points")
+
+# Email
+ss.email = st.text_input("Email", value=ss.email, placeholder="name@example.org")
+
+# Reset
+right_align = st.columns([3,1])[1]
+with right_align:
+    if st.button("Reset to averages", disabled=ss.saving):
+        ss.weights = dict(ss.defaults)
+        for comp in ss.weights:
+            ss[f"num_{comp}"] = float(ss.weights[comp])
+        st.rerun()
+
+st.markdown("<hr/>", unsafe_allow_html=True)
+
+# Inicializar inputs en primer render
+if ss.get("_init"):
+    for comp in indicators:
+        ss[f"num_{comp}"] = float(ss.weights[comp])
+    ss._init = False
+
+# HUD
+used = float(sum(ss.weights.values()))
+render_floating_hud(used)
+
+# ── ALERTA arriba del Allocation ──
+rem = remaining_points(ss.weights)
 if abs(rem) <= EPS:
-    st.markdown(f"<div class='note-ok'>✅ The weights sum to 1.00. You can submit.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='alert green'>✅ The weights sum to 1.00. You can submit.</div>", unsafe_allow_html=True)
 else:
     tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
-    st.markdown(
-        f"<div class='note-warn'>⚠️ The weights must sum to 1.00. {tip} to continue.</div>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<div class='alert red'>⚠️ The weights must sum to 1.00. {tip} to continue.</div>", unsafe_allow_html=True)
 
-# ───────── ALLOCATION (dos columnas SIEMPRE) ─────────
+# ── Allocation (compacto) ──
 st.subheader("Allocation")
-st.markdown("<div class='alloc-grid'>", unsafe_allow_html=True)
-for comp in indicators:
-    # Tarjeta contenedora
-    st.markdown("<div class='alloc-card'>", unsafe_allow_html=True)
-    st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-    st.number_input(
-        label="",
-        key=f"num_{comp}",
-        min_value=0.0,
-        max_value=1.0,
-        step=0.01,
-        format="%.2f",
-        label_visibility="collapsed",
-        on_change=make_on_change(comp),
-        disabled=st.session_state.saving
-    )
-    st.markdown("</div>", unsafe_allow_html=True)   # cierra .rowbox
-    st.markdown("</div>", unsafe_allow_html=True)   # cierra .alloc-card
-st.markdown("</div>", unsafe_allow_html=True)       # cierra .alloc-grid
 
-# ───────── RANKING (entre Allocation y Submit) ─────────
-def render_ranking_html(weights: Dict[str, float]) -> None:
-    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
-    rows = []
-    for i, (name, pts) in enumerate(ordered, start=1):
-        rows.append(f"<tr><td>{i}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
-    table_html = f"""
-    <div class='rowbox' style="margin-top:.6rem">
-      <table class="rank">
-        <colgroup><col/><col/><col/></colgroup>
-        <thead>
-          <tr class="title-row"><th></th><th class="title-cell">Ranking</th><th></th></tr>
-          <tr><th>#</th><th>Indicator</th><th>Weight</th></tr>
-        </thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </div>
-    """
-    st.markdown(table_html, unsafe_allow_html=True)
+layout = st.radio("Layout", ["Two columns (2×)", "Single column (label + input en la misma fila)"],
+                  horizontal=True, index=0)
 
-render_ranking_html(st.session_state.weights)
+def render_input_row(container, comp: str):
+    lc, rc = container.columns([0.62, 0.38], gap="small")
+    lc.markdown(f"<div class='alloc-label'>{comp}</div>", unsafe_allow_html=True)
+    with rc:
+        st.number_input(
+            label="",
+            key=f"num_{comp}",
+            min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
+            label_visibility="collapsed", on_change=make_on_change(comp),
+            disabled=ss.saving
+        )
 
-# Memoria (opcional, ayuda para monitorear)
+if layout.startswith("Two"):
+    st.markdown("<div id='alloc-2col'>", unsafe_allow_html=True)
+    colL, colR = st.columns(2, gap="small")
+    # Repartimos alternando para equilibrar alturas
+    for idx, comp in enumerate(indicators):
+        container = colL if (idx % 2 == 0) else colR
+        with container:
+            st.markdown("<div class='alloc-row'>", unsafe_allow_html=True)
+            render_input_row(container, comp)
+            st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+else:
+    for comp in indicators:
+        st.markdown("<div class='alloc-row'>", unsafe_allow_html=True)
+        render_input_row(st, comp)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Ranking entre Allocation y Submit ──
+st.markdown("<hr/>", unsafe_allow_html=True)
+render_ranking_html(ss.weights)
+
+# Memoria (útil para monitoreo rápido)
 mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
 st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
-# ───────── FOOTER / SUBMIT ─────────
+# ── SUBMIT ──
 st.markdown("<hr/>", unsafe_allow_html=True)
-email_raw = st.session_state.email or ""
+email_raw = ss.email or ""
 email_norm = email_raw.strip()
 ok_email = bool(EMAIL_RE.match(email_norm))
 now = time.time()
-cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
+cooling = (now - ss.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 
 disabled_submit = (
     (not ok_email)
-    or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00
-    or st.session_state.saving
+    or ss.submitted
+    or (abs(remaining_points(ss.weights)) > EPS)  # sólo permitir submit si suma 1.00 exacto
+    or ss.saving
     or cooling
 )
 
 status_box = st.empty()
-
-left, right = st.columns([1,1])
-with left:
-    submit_label = "Submit" if not st.session_state.submitted else "✅ Submitted — Thank you!"
-    if st.button(submit_label, disabled=disabled_submit):
-        submit_lock = get_submit_lock()
-        if not submit_lock.acquire(blocking=False):
-            st.toast("Submission already in progress…", icon="⏳")
-            st.stop()
-        try:
-            now2 = time.time()
-            if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
-                st.session_state.status = "cooldown"
+submit_label = "Submit" if not ss.submitted else "✅ Submitted — Thank you!"
+if st.button(submit_label, disabled=disabled_submit):
+    submit_lock = get_submit_lock()
+    if not submit_lock.acquire(blocking=False):
+        st.toast("Submission already in progress…", icon="⏳")
+        st.stop()
+    try:
+        now2 = time.time()
+        if (now2 - ss.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
+            ss.status = "cooldown"
+        else:
+            ph = payload_hash(ss.email, indicators, ss.weights)
+            if ss.inflight_payload_hash == ph or ss.last_payload_hash == ph:
+                ss.status = "duplicate"
             else:
-                ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
-                if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
-                    st.session_state.status = "duplicate"
-                else:
-                    st.session_state.inflight_payload_hash = ph
-                    st.session_state.saving = True
-                    st.session_state.status = "saving"
-                    try:
-                        save_to_sheet(
-                            st.session_state.email.strip(),
-                            st.session_state.weights,
-                            st.session_state.session_id,
-                            indicator_order=indicators
-                        )
-                        st.session_state.last_payload_hash = ph
-                        st.session_state.submitted = True
-                        st.session_state.status = "saved"
-                        st.toast("Submitted. Thank you!", icon="✅")
-                    except Exception as e:
-                        st.session_state.status = "error"
-                        st.session_state.error_msg = str(e)
-                    finally:
-                        st.session_state.saving = False
-                        st.session_state.inflight_payload_hash = ""
-                        st.session_state.last_submit_ts = time.time()
-        finally:
-            try:
-                submit_lock.release()
-            except Exception:
-                pass
+                ss.inflight_payload_hash = ph
+                ss.saving = True
+                ss.status = "saving"
+                try:
+                    save_to_sheet(
+                        ss.email.strip(),
+                        ss.weights,
+                        ss.session_id,
+                        indicator_order=indicators
+                    )
+                    ss.last_payload_hash = ph
+                    ss.submitted = True
+                    ss.status = "saved"
+                    st.toast("Submitted. Thank you!", icon="✅")
+                except Exception as e:
+                    ss.status = "error"
+                    ss.error_msg = str(e)
+                finally:
+                    ss.saving = False
+                    ss.inflight_payload_hash = ""
+                    ss.last_submit_ts = time.time()
+    finally:
+        try: submit_lock.release()
+        except Exception: pass
 
-with right:
-    pass
-
-# ───────── STATUS ─────────
-if st.session_state.get("saving", False):
+# ── STATUS ──
+if ss.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
-    if st.session_state.submitted:
-        pass
-    elif st.session_state.status == "duplicate":
+    if ss.submitted:
+        pass  # el botón ya muestra el estado
+    elif ss.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
-        st.session_state.status = "idle"
-    elif st.session_state.status == "cooldown":
+        ss.status = "idle"
+    elif ss.status == "cooldown":
         status_box.info("Please wait a moment before submitting again.")
-        st.session_state.status = "idle"
-    elif st.session_state.status == "error":
-        status_box.error(f"Error saving your response. {st.session_state.get('error_msg','')}")
-        st.session_state.status = "idle"
+        ss.status = "idle"
+    elif ss.status == "error":
+        status_box.error(f"Error saving your response. {ss.get('error_msg','')}")
+        ss.status = "idle"
     else:
         status_box.empty()
