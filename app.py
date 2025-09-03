@@ -358,9 +358,6 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
 
-#mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
-#st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
-
 # ───────── HUD FLOTANTE ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
     pct = max(0.0, min(1.0, pct_used)) * 100.0
@@ -428,6 +425,7 @@ with left:
                         st.session_state.submitted = True
                         st.session_state.status = "saved"
                         st.toast("Submitted. Thank you!", icon="✅")
+                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC  # ### NEW
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
@@ -445,10 +443,15 @@ with right:
     pass
 
 # ───────── STATUS ─────────
-if st.session_state.get("saving", False):
+# Prioridad: si hay “gracias” vigente, mostrarlo siempre unos segundos
+now_show = time.time()
+if now_show < st.session_state.get("thanks_expire", 0):  # ### NEW
+    status_box.success("✅ Submitted — Thank you!")
+elif st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
     if st.session_state.submitted:
+        # Nada extra; el label del botón ya cambia y el banner puede haber aparecido arriba
         pass
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
