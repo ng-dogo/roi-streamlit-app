@@ -3,11 +3,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re, uuid, datetime as dt, os, time, hashlib
-from typing import Dict, List
-from threading import Lock
+from typing import Dict, List, Optional
 import random
+import threading
+from queue import Queue, Empty
 import os, psutil
-
+import csv
+import traceback
 
 from google.oauth2.service_account import Credentials
 import gspread
@@ -26,104 +28,35 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:hover{filter:brightness(0.95)}
-/* Estilo verde oscuro cuando ya se envió */
-.stButton>button:disabled{
-  background:#0b6b59;
-  color:#fff; 
-  opacity:1;
-  cursor:default;
-}
+.stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default;}
 .center input[type=number]{text-align:center;font-weight:600}
 .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
-
-/* Tabla ranking minimalista (no widgets) */
-.rank {
-  width:100%;
-  border-collapse:collapse;
-  font-size:.95rem;
-}
-.rank th, .rank td {
-  padding:.35rem .5rem;
-  border-bottom:1px solid var(--border);
-}
-.rank th {
-  font-weight:600;
-  color:var(--muted);
-  text-align:center;   /* todos los encabezados centrados */
-}
-.rank td {
-  text-align:left;     /* por defecto, texto a la izquierda */
-}
-.rank td:first-child,
-.rank td:last-child {
-  text-align:center;   /* centramos # y Weight */
-}
-/* Título de la tabla Ranking centrado */
-.name.center {
-  text-align:center;
-}
-
+.rank {width:100%;border-collapse:collapse;font-size:.95rem;}
+.rank th, .rank td {padding:.35rem .5rem;border-bottom:1px solid var(--border);}
+.rank th {font-weight:600;color:var(--muted);text-align:center;}
+.rank td {text-align:left;}
+.rank td:first-child, .rank td:last-child {text-align:center;}
+.name.center {text-align:center;}
 .small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
-
-/* Divisor suave entre secciones superiores */
 .soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
-
-/* — HUD flotante inferior (Opción A) — */
-.hud {
-  position: fixed;
-  left: 12px;        /* pegado a la izquierda */
-  bottom: 12px;      /* separación del borde inferior */
-  width: 65vw;       /* ocupa 3/4 del ancho de la pantalla */
-  max-width: 720px;  /* opcional, límite máximo */
-  background: rgba(255,255,255,.9);
-  backdrop-filter: blur(6px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.08);
-  padding: .5rem .75rem;
-  z-index: 9999;
-}
-
+.hud {position: fixed; left: 12px; bottom: 12px; width: 65vw; max-width: 720px; background: rgba(255,255,255,.9);
+  backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.08);
+  padding: .5rem .75rem; z-index: 9999;}
 .dark .hud { background: rgba(28,28,28,.85) }
-
 .hud-row{ display:flex; align-items:center; gap:.75rem }
 .hud-mono{ font-variant-numeric: tabular-nums; font-weight:600 }
 .hud-spacer{ flex:1 }
-
-.hud-bar{
-  position:relative;
-  height: 8px;
-  background: rgba(127,127,127,.18);
-  border-radius: 999px;
-  overflow: hidden;
-  width: 52%;
-}
-.hud-fill{
-  position:absolute; left:0; top:0; bottom:0;
-  background: var(--brand);
-  width: 0%;
-}
-@media (hover:hover){
-  .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) }
-}
-@media (max-width: 480px){
-  .hud { bottom: 8px; padding: .45rem .6rem }
-}
-
+.hud-bar{ position:relative; height: 8px; background: rgba(127,127,127,.18); border-radius: 999px; overflow: hidden; width: 52%;}
+.hud-fill{ position:absolute; left:0; top:0; bottom:0; background: var(--brand); width: 0%;}
+@media (hover:hover){ .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) } }
+@media (max-width: 480px){ .hud { bottom: 8px; padding: .45rem .6rem } }
 @media (prefers-color-scheme: dark){
-  .hud{
-    background: rgba(18,18,18,.85);
-    border-color: rgba(255,255,255,.12);
-  }
+  .hud{ background: rgba(18,18,18,.85); border-color: rgba(255,255,255,.12); }
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
-  /* opcional: si tu brand es muy oscuro en dark, podés aclararlo un toque */
-  /* .hud-fill{ background: #0fb58f; } */
 }
-
-
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -132,9 +65,17 @@ st.markdown(CSS, unsafe_allow_html=True)
 CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
 TOTAL_POINTS = 1.0  # pesos suman 1.00
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-SUBMISSION_COOLDOWN_SEC = 2.0
-THANKS_VISIBLE_SEC = 3.0
+SUBMISSION_COOLDOWN_SEC = 1.5
 EPS = 1e-6  # tolerancia numérica
+
+# Batching / backoff (ajustables por env)
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "12"))                 # cantidad gatillo
+FLUSH_INTERVAL = float(os.getenv("FLUSH_INTERVAL", "1.25"))     # seg: gatillo temporal
+MAX_BATCH_PER_FLUSH = int(os.getenv("MAX_BATCH_PER_FLUSH", "120"))
+BASE_DELAY = float(os.getenv("BACKOFF_BASE_DELAY", "0.5"))      # seg, backoff base
+MAX_BACKOFF_SLEEP = float(os.getenv("MAX_BACKOFF_SLEEP", "5.0"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "6"))
+FALLBACK_CSV = os.getenv("FALLBACK_CSV", "/tmp/bap_fallback.csv")  # opcional
 
 # ───────── STATE ─────────
 if "session_id" not in st.session_state:
@@ -159,8 +100,8 @@ if "inflight_payload_hash" not in st.session_state:
     st.session_state.inflight_payload_hash = ""
 if "status" not in st.session_state:
     st.session_state.status = "idle"
-if "thanks_expire" not in st.session_state:
-    st.session_state.thanks_expire = 0.0
+if "thanks_ts" not in st.session_state:
+    st.session_state.thanks_ts = 0.0
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -173,8 +114,11 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
-    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
+    out["avg_weight"] = (
+        pd.to_numeric(out["avg_weight"], errors="coerce")
+        .clip(lower=0.0, upper=1.0)
+        .fillna(0.0)
+    )
     return out
 
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
@@ -239,59 +183,124 @@ def get_worksheet():
     sh = client.open_by_key(st.secrets.sheet_id).sheet1
     return sh
 
-@st.cache_resource(show_spinner=False)
-def get_submit_lock() -> Lock:
-    return Lock()
-
-def _ensure_header_once(sh, headers: List[str]) -> None:
+def _ensure_header_once(ws, headers: List[str]) -> None:
     """Escribe encabezado solo si hace falta (tolerante a concurrencia)."""
     try:
-        first_row = sh.row_values(1)
+        first_row = ws.row_values(1)
         if first_row and first_row[:len(headers)] == headers:
             return
     except Exception:
-        # si falla la lectura por carrera, intentamos setear igual
         pass
     try:
-        sh.update("A1", [headers])
+        ws.update("A1", [headers])
     except Exception:
-        # si otra instancia ya lo escribió, ignoramos
         pass
 
-def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indicator_order: List[str]):
-    sh = get_worksheet()
-    headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
+class BatchAppender:
+    """Acumula filas y hace append en lote con backoff + jitter. Compartido entre sesiones."""
+    def __init__(
+        self,
+        worksheet,
+        headers: List[str],
+        batch_size: int = BATCH_SIZE,
+        flush_interval: float = FLUSH_INTERVAL,
+        max_batch_per_flush: int = MAX_BATCH_PER_FLUSH,
+        base_delay: float = BASE_DELAY,
+        max_backoff_sleep: float = MAX_BACKOFF_SLEEP,
+        max_retries: int = MAX_RETRIES,
+        fallback_csv: Optional[str] = FALLBACK_CSV,
+    ):
+        self.ws = worksheet
+        self.headers = headers
+        self.batch_size = batch_size
+        self.flush_interval = flush_interval
+        self.max_batch_per_flush = max_batch_per_flush
+        self.base_delay = base_delay
+        self.max_backoff_sleep = max_backoff_sleep
+        self.max_retries = max_retries
+        self.fallback_csv = fallback_csv
 
-    # 1) Encabezado una sola vez
-    _ensure_header_once(sh, headers)
+        _ensure_header_once(self.ws, self.headers)
 
-    # 2) Construir fila
-    row = (
-        [dt.datetime.now().isoformat(), email, session_id]
-        + [float(np.round(weights[k], 2)) for k in indicator_order]
-        + [float(np.round(sum(weights.values()), 2))]
-    )
+        self.q: Queue = Queue()
+        self._stop = threading.Event()
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
 
-    # 3) Append con backoff + jitter (sin CSV local)
-    base_delay = 0.4
-    attempts = 5
-    for attempt in range(1, attempts + 1):
-        # pequeño jitter para desincronizar ráfagas
-        time.sleep(random.uniform(0.0, 0.35))
+    def enqueue(self, row: List):
+        self.q.put(row)
+
+    def stop(self):
+        self._stop.set()
         try:
-            sh.append_row(row, value_input_option="RAW")
-            return  # éxito
-        except APIError as e:
-            if attempt == attempts:
-                # agotamos reintentos: propagamos error legible
-                raise RuntimeError(
-                    "No pudimos guardar en Google Sheets tras varios intentos. "
-                    "Por favor, esperá unos segundos y hacé un único reintento."
-                ) from e
-            # backoff exponencial acotado
-            sleep_s = min(4.0, base_delay * (2 ** (attempt - 1)))
-            time.sleep(sleep_s)
+            self._worker.join(timeout=2.0)
+        except Exception:
+            pass
 
+    def _flush_batch(self, batch: List[List]):
+        # Backoff exponencial con jitter a nivel de lote
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                # Jitter pequeño para desincronizar ráfagas
+                time.sleep(random.uniform(0.0, 0.25))
+                # gspread worksheet.append_rows usa la Values API 'append'
+                self.ws.append_rows(batch, value_input_option="RAW")
+                return True
+            except APIError:
+                if attempt == self.max_retries:
+                    break
+                sleep_s = min(self.max_backoff_sleep, self.base_delay * (2 ** (attempt - 1)))
+                time.sleep(sleep_s + random.uniform(0.0, 0.25))
+            except Exception:
+                # Errores no-API: también reintentar
+                if attempt == self.max_retries:
+                    break
+                sleep_s = min(self.max_backoff_sleep, self.base_delay * (2 ** (attempt - 1)))
+                time.sleep(sleep_s + random.uniform(0.0, 0.25))
+
+        # Fallback local si no logramos escribir tras reintentos
+        try:
+            if self.fallback_csv:
+                os.makedirs(os.path.dirname(self.fallback_csv), exist_ok=True)
+                write_header = not os.path.exists(self.fallback_csv)
+                with open(self.fallback_csv, "a", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    if write_header:
+                        w.writerow(self.headers)
+                    for r in batch:
+                        w.writerow(r)
+        except Exception:
+            # como último recurso, al menos log
+            traceback.print_exc()
+        return False
+
+    def _run(self):
+        """Worker: agrupa por tiempo o tamaño y escribe."""
+        buf: List[List] = []
+        last_push = time.time()
+        while not self._stop.is_set():
+            timeout = max(0.05, self.flush_interval - (time.time() - last_push))
+            try:
+                row = self.q.get(timeout=timeout)
+                buf.append(row)
+                # Si llenamos tamaño de lote, disparamos flush
+                if len(buf) >= self.batch_size:
+                    batch = buf[:self.max_batch_per_flush]
+                    buf = buf[self.max_batch_per_flush:]
+                    self._flush_batch(batch)
+                    last_push = time.time()
+            except Empty:
+                # Tiempo cumplido: si hay acumulado, flush
+                if buf:
+                    batch = buf[:self.max_batch_per_flush]
+                    buf = buf[self.max_batch_per_flush:]
+                    self._flush_batch(batch)
+                    last_push = time.time()
+
+@st.cache_resource(show_spinner=False)
+def get_batch_appender(headers_tuple: tuple):
+    ws = get_worksheet()
+    return BatchAppender(ws, headers=list(headers_tuple))
 
 # ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
@@ -311,10 +320,9 @@ st.title("RGI – Budget Allocation Points")
 # Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
-# Línea suave
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Reset (dejamos el botón arriba; REMOVIDA la barra st.progress para no duplicar)
+# Reset
 right_align = st.columns([3,1])[1]
 with right_align:
     if st.button("Reset to averages", disabled=st.session_state.saving):
@@ -374,13 +382,13 @@ render_ranking_html(st.session_state.weights)
 mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
 st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
-# ───────── HUD FLOTANTE (Opción A) ─────────
+# ───────── HUD FLOTANTE ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
     pct = max(0.0, min(1.0, pct_used)) * 100.0
     st.markdown(f"""
     <div class="hud">
       <div class="hud-row">
-        <div class="hud-mono">{used:.2f}/{(used+(1-used)):.2f}</div>
+        <div class="hud-mono">{used:.2f}/1.00</div>
         <div class="hud-spacer"></div>
         <div class="hud-bar">
           <div class="hud-fill" style="width:{pct:.2f}%"></div>
@@ -389,7 +397,6 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     </div>
     """, unsafe_allow_html=True)
 
-# Calculamos métricas y pintamos HUD (sin usar st.progress)
 used = float(sum(st.session_state.weights.values()))
 rem = remaining_points(st.session_state.weights)
 pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
@@ -398,7 +405,6 @@ render_floating_hud(used, rem, pct_used)
 # ───────── WARNING SI NO SUMA 1 ─────────
 used = float(sum(st.session_state.weights.values()))
 rem = remaining_points(st.session_state.weights)
-
 if abs(rem) > EPS:
     tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
     st.markdown(
@@ -439,60 +445,57 @@ left, right = st.columns([1,1])
 with left:
     submit_label = "Submit" if not st.session_state.submitted else "✅ Submitted — Thank you!"
     if st.button(submit_label, disabled=disabled_submit):
-        submit_lock = get_submit_lock()
-        if not submit_lock.acquire(blocking=False):
-            st.toast("Submission already in progress…", icon="⏳")
-            st.stop()
-        try:
-            now2 = time.time()
-            if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
-                st.session_state.status = "cooldown"
+        now2 = time.time()
+        if (now2 - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC:
+            st.session_state.status = "cooldown"
+        else:
+            # Construcción robusta de row (redondeo a centésimas y suma=1.00 garantizada)
+            indicators = list(st.session_state.weights.keys())
+            # Normalizamos a centésimas manteniendo suma exacta 1.00
+            w_norm = round_to_cents_preserve_total(st.session_state.weights)
+            ph = payload_hash(st.session_state.email, indicators, w_norm)
+            if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
+                st.session_state.status = "duplicate"
             else:
-                ph = payload_hash(st.session_state.email, indicators, st.session_state.weights)
-                if st.session_state.inflight_payload_hash == ph or st.session_state.last_payload_hash == ph:
-                    st.session_state.status = "duplicate"
-                else:
-                    st.session_state.inflight_payload_hash = ph
-                    st.session_state.saving = True
-                    st.session_state.status = "saving"
-                    try:
-                        # dentro del bloque try donde guardás en Sheets:
-                        save_to_sheet(
-                            st.session_state.email.strip(),
-                            st.session_state.weights,
-                            st.session_state.session_id,
-                            indicator_order=indicators
-                        )
-                        st.session_state.last_payload_hash = ph
-                        st.session_state.submitted = True            # <- clave para fijar el estado
-                        st.session_state.status = "saved"            # mantenemos por compatibilidad
-                        #st.session_state.thanks_expire = time.time() + 3600  # opcional, por si querés un timeout largo
-                        st.toast("Submitted. Thank you!", icon="✅")
-                    except Exception as e:
-                        st.session_state.status = "error"
-                        st.session_state.error_msg = str(e)
-                    finally:
-                        st.session_state.saving = False
-                        st.session_state.inflight_payload_hash = ""
-                        st.session_state.last_submit_ts = time.time()
-        finally:
-            try:
-                submit_lock.release()
-            except Exception:
-                pass
+                st.session_state.inflight_payload_hash = ph
+                st.session_state.saving = True
+                st.session_state.status = "queueing"
+                try:
+                    headers = ["timestamp","email","session_id"] + indicators + ["total","submission_hash"]
+                    # Inicializa (o reutiliza) appender compartido
+                    appender = get_batch_appender(tuple(headers))
+                    row = (
+                        [dt.datetime.now().isoformat(), email_norm, st.session_state.session_id]
+                        + [float(np.round(w_norm[k], 2)) for k in indicators]
+                        + [float(np.round(sum(w_norm.values()), 2))]
+                        + [ph[:12]]  # id corto visible
+                    )
+                    # Encola (respuesta inmediata al usuario)
+                    appender.enqueue(row)
+
+                    st.session_state.last_payload_hash = ph
+                    st.session_state.submitted = True
+                    st.session_state.status = "queued"
+                    st.session_state.thanks_ts = time.time()
+                    st.toast("✅ Received — your allocation has been queued for logging.", icon="✅")
+                except Exception as e:
+                    st.session_state.status = "error"
+                    st.session_state.error_msg = str(e)
+                finally:
+                    st.session_state.saving = False
+                    st.session_state.inflight_payload_hash = ""
+                    st.session_state.last_submit_ts = time.time()
 
 with right:
     pass
 
 # ───────── STATUS ─────────
-# ───────── STATUS ─────────
-# ───────── STATUS ─────────
 if st.session_state.get("saving", False):
-    status_box.info("⏳ Saving your response… please wait. Do not refresh.")
+    status_box.info("⏳ Saving your response…")
 else:
     if st.session_state.submitted:
-        # no mostramos nada extra: el botón ya indica éxito
-        pass
+        # Botón ya indica éxito; nota opcional
+        status_box.success("Your response was received and will appear in the log shortly.")
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
         st.session_state.status = "idle"
@@ -504,5 +507,3 @@ else:
         st.session_state.status = "idle"
     else:
         status_box.empty()
-
-
