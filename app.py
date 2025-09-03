@@ -18,35 +18,54 @@ st.set_page_config(page_title="RGI – Budget Allocation Points", page_icon="⚡
 CSS = """
 <style>
 :root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
+
+/* Fuente y contenedor más compacto */
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
-.main .block-container{max-width:860px}
-hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
-.name{font-weight:600;margin:.35rem 0 .25rem}
-.rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
-.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
+.main .block-container{max-width:860px; padding-top: 0.6rem;}
+
+/* Evitar scroll horizontal en cualquier caso */
+html, body{ overflow-x: hidden; }
+
+/* Divisores y títulos con menos margen vertical */
+hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:.5rem 0}
+h1, h2, h3{ margin: .25rem 0 .5rem; }
+.stSubtitle, .stHeader{ margin: .25rem 0 .5rem !important; }
+
+/* Botón */
+.stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;
+  padding:.45rem .9rem}
 .stButton>button:hover{filter:brightness(0.95)}
-/* Estilo verde oscuro cuando ya se envió */
+/* Verde oscuro cuando ya se envió */
 .stButton>button:disabled{
   background:#0b6b59;
   color:#fff; 
   opacity:1;
   cursor:default;
 }
+
+/* Campos numéricos centrados y compactos */
 .center input[type=number]{text-align:center;font-weight:600}
-.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
+
+/* Badges y kpis (si se usan) */
+.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);
+  font-size:.9rem;color:var(--muted)}
 .kpis{display:flex;gap:1rem;align-items:center}
 .kpis .strong{font-weight:700}
 
-/* Tabla ranking minimalista (no widgets) */
+/* Caja genérica (se sigue usando en Ranking) */
+.rowbox{padding:.45rem .5rem;border-radius:12px;border:1px solid var(--border);}
+
+/* Tabla ranking más cerrada */
 .rank { width:100%; border-collapse:collapse; font-size:.95rem; }
-.rank th, .rank td { padding:.35rem .5rem; border-bottom:1px solid var(--border); }
+.rank th, .rank td { padding:.25rem .4rem; border-bottom:1px solid var(--border); }
 .rank th { font-weight:600; color:var(--muted); text-align:center; }
 .rank td { text-align:left; }
 .rank td:first-child, .rank td:last-child { text-align:center; }
 .name.center { text-align:center; }
 
-.small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
-.soft-divider{height:0;border-top:1px solid var(--border);margin:.5rem 0 1rem}
+/* Notas pequeñas */
+.small-note{font-size:.9rem;color:var(--muted);margin:.15rem 0 0}
+.soft-divider{height:0;border-top:1px solid var(--border);margin:.35rem 0 .75rem}
 
 /* — HUD flotante inferior — */
 .hud {
@@ -87,6 +106,58 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
 }
+
+/* ============ ALLOCATION ULTRA-COMPACT ============ */
+/* Contenedor responsivo en grilla: jamás produce scroll horizontal */
+.alloc{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: .5rem .75rem;
+  align-items: start;
+}
+
+/* Tarjeta/row por indicador: nombre + input en una sola línea */
+.alloc-item{
+  display: grid;
+  grid-template-columns: 1fr 96px;  /* etiqueta flexible + input fijo */
+  align-items: center;
+  gap: .25rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .35rem .5rem;
+  background: rgba(127,127,127,.04);
+}
+
+/* Nombre del indicador */
+.alloc-name{
+  font-weight:600; 
+  margin: 0; 
+  line-height:1.2;
+  word-break: break-word;
+  color: rgba(0,0,0,.88);
+}
+
+/* El widget numérico sin márgenes extra y más bajo */
+.alloc-item [data-testid="stNumberInput"]{ margin: 0 !important; }
+.alloc-item [data-testid="stNumberInput"] > label{ display:none !important; }
+.alloc-item input[type=number]{
+  text-align:center;
+  font-weight:600;
+  padding:.25rem .4rem;
+  height: 2.0rem;
+}
+
+/* En pantallas muy estrechas, input ocupa el ancho disponible sin desbordar */
+@media (max-width: 360px){
+  .alloc-item{ grid-template-columns: 1fr 88px; }
+}
+
+/* Ajustes sutiles en mensajes/alertas para ahorrar vertical */
+.stAlert{ padding: .5rem .75rem; }
+.stAlert p{ margin: 0; }
+
+/* Ajuste de espacios en campos de texto (email) */
+[data-testid="stTextInput"]{ margin-bottom: .35rem; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -281,8 +352,8 @@ if abs(rem) > EPS:
     st.markdown(
         f"""
         <div style="
-            margin:.75rem 0;
-            padding:.6rem .9rem;
+            margin:.5rem 0;
+            padding:.55rem .8rem;
             border:1px solid rgba(217,48,37,.35);
             background:rgba(217,48,37,.08);
             border-radius:8px;
@@ -297,8 +368,8 @@ else:
     st.markdown(
         """
         <div style="
-            margin:.75rem 0;
-            padding:.6rem .9rem;
+            margin:.5rem 0;
+            padding:.55rem .8rem;
             border:1px solid rgba(16,127,70,.35);
             background:rgba(16,127,70,.08);
             border-radius:8px;
@@ -313,14 +384,17 @@ else:
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
+# Inicializar inputs una sola vez
 if st.session_state.get("_init_inputs"):
     for comp in indicators:
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
+# ============ NUEVO: grilla compacta de asignación ============
+st.markdown("<div class='alloc'>", unsafe_allow_html=True)
 for comp in indicators:
-    st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
+    st.markdown("<div class='alloc-item'>", unsafe_allow_html=True)
+    st.markdown(f"<div class='alloc-name'>{comp}</div>", unsafe_allow_html=True)
     st.number_input(
         label="",
         key=f"num_{comp}",
@@ -333,6 +407,8 @@ for comp in indicators:
         disabled=st.session_state.saving
     )
     st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+# ===============================================================
 
 # ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
