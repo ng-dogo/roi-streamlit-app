@@ -47,7 +47,7 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   text-align:center;
 }
 .rank td{
-  text-align:center;
+  text-align:left;
 }
 
 .rank td.r{text-align:right}
