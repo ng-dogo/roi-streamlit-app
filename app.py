@@ -456,3 +456,7 @@ else:
     else:
         status_box.empty()
 
+# solo para debug
+import os, psutil
+mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
+st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
