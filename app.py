@@ -92,8 +92,8 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
-CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight (en 0–1)
-TOTAL_POINTS = 100.0  # puntos totales en UI
+CSV_PATH = os.getenv("RGI_DEFAULTS_CSV", "rgi_bap_defaults.csv")  # columns: indicator, avg_weight
+TOTAL_POINTS = 1.0  # pesos suman 1.00
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SUBMISSION_COOLDOWN_SEC = 2.0
 THANKS_VISIBLE_SEC = 3.0
@@ -103,10 +103,8 @@ EPS = 1e-6  # tolerancia numérica
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if "weights" not in st.session_state:
-    # IMPORTANTE: siempre en fracciones [0,1] internamente
     st.session_state.weights: Dict[str, float] = {}
 if "defaults" not in st.session_state:
-    # fracciones [0,1]
     st.session_state.defaults: Dict[str, float] = {}
 if "email" not in st.session_state:
     st.session_state.email = ""
@@ -170,29 +168,17 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
             rounded[k] -= 1
     return {k: rounded[k] / 100.0 for k in rounded}
 
-def used_points(weights: Dict[str, float]) -> float:
-    """Suma de puntos (0–100) a partir de fracciones [0,1] internas."""
-    return float(100.0 * float(sum(weights.values())))
-
 def remaining_points(weights: Dict[str, float]) -> float:
-    """Puntos restantes para llegar a 100."""
-    return float(TOTAL_POINTS - used_points(weights))
+    return float(TOTAL_POINTS - float(sum(weights.values())))
 
-# Callback: UI en puntos -> interno en fracciones
+# *** CAMBIO CLAVE: callback sin tope global (permite pasar de 1) ***
 def make_on_change(comp: str):
     def _cb():
-        # valor en puntos desde el input
-        raw = st.session_state.get(f"num_{comp}", 0)
-        try:
-            new_pts = int(float(raw))
-        except Exception:
-            new_pts = 0
-        # clamp individual en [0,100]
-        new_pts = max(0, min(int(TOTAL_POINTS), new_pts))
-        # redondeo fracción a 2 decimales (preserva granularidad de 1 punto = 0.01)
-        new_frac = float(np.round(new_pts / 100.0 + 1e-9, 2))
-        st.session_state.weights[comp] = new_frac         # interno [0,1]
-        st.session_state[f"num_{comp}"] = int(new_pts)    # UI en puntos
+        new_val = float(st.session_state.get(f"num_{comp}", 0.0))
+        # clamp individual en [0,1] y redondeo a 2 decimales
+        new_val = float(np.round(min(max(new_val, 0.0), 1.0) + 1e-9, 2))
+        st.session_state.weights[comp] = new_val
+        st.session_state[f"num_{comp}"] = new_val
     return _cb
 
 def payload_hash(email: str, indicators: List[str], weights: Dict[str, float]) -> str:
@@ -237,7 +223,7 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 
     row = (
         [dt.datetime.now().isoformat(), email, session_id]
-        + [float(np.round(weights[k], 2)) for k in indicator_order]   # guarda en [0,1]
+        + [float(np.round(weights[k], 2)) for k in indicator_order]
         + [float(np.round(sum(weights.values()), 2))]
     )
 
@@ -261,10 +247,10 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
     indicators = df["indicator"].tolist()
-    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}  # [0,1]
-    defaults_cents = round_to_cents_preserve_total(defaults_raw)               # [0,1] suma 1.00
+    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    defaults_cents = round_to_cents_preserve_total(defaults_raw)
     st.session_state.defaults = defaults_cents
-    st.session_state.weights = dict(defaults_cents)                            # [0,1]
+    st.session_state.weights = dict(defaults_cents)
     st.session_state._init_inputs = True
 else:
     indicators = list(st.session_state.weights.keys())
@@ -281,17 +267,17 @@ st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 right_align = st.columns([3,1])[1]
 with right_align:
     if st.button("Reset to averages", disabled=st.session_state.saving):
-        st.session_state.weights = dict(st.session_state.defaults)  # [0,1]
+        st.session_state.weights = dict(st.session_state.defaults)
         for comp in st.session_state.weights:
-            st.session_state[f"num_{comp}"] = int(round(100.0 * float(st.session_state.weights[comp])))  # puntos
+            st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
         st.rerun()
 
 # ───────── AVISO (rojo/verde) SEGÚN SUMA ─────────
-used_pts = used_points(st.session_state.weights)
-rem_pts = remaining_points(st.session_state.weights)
+used = float(sum(st.session_state.weights.values()))
+rem = remaining_points(st.session_state.weights)
 
-if abs(rem_pts) > EPS:
-    tip = f"Add {rem_pts:.0f}" if rem_pts > 0 else f"Remove {abs(rem_pts):.0f}"
+if abs(rem) > EPS:
+    tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
     st.markdown(
         f"""
         <div style="
@@ -302,7 +288,7 @@ if abs(rem_pts) > EPS:
             border-radius:8px;
             font-size:.95rem;
             color:#b3261e;">
-            ⚠️ The points must sum to <b>100</b>. {tip} to continue.
+            ⚠️ The weights must sum to 1.00. {tip} to continue.
         </div>
         """,
         unsafe_allow_html=True
@@ -318,7 +304,7 @@ else:
             border-radius:8px;
             font-size:.95rem;
             color:#0E7C66;">
-            ✅ The points sum to <b>100</b>. You can submit.
+            ✅ The weights sum to <b>1.00</b>. You can submit.
         </div>
         """,
         unsafe_allow_html=True
@@ -328,9 +314,8 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
 if st.session_state.get("_init_inputs"):
-    # Inicializa inputs de UI en puntos
     for comp in indicators:
-        st.session_state[f"num_{comp}"] = int(round(100.0 * float(st.session_state.weights[comp])))
+        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
 for comp in indicators:
@@ -339,9 +324,10 @@ for comp in indicators:
     st.number_input(
         label="",
         key=f"num_{comp}",
-        min_value=0,
-        max_value=int(TOTAL_POINTS),
-        step=1,
+        min_value=0.0,
+        max_value=1.0,
+        step=0.01,
+        format="%.2f",
         label_visibility="collapsed",
         on_change=make_on_change(comp),
         disabled=st.session_state.saving
@@ -353,15 +339,18 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
     rows = []
     rank = 1
-    for name, frac in ordered:
-        pts = float(frac) * 100.0
-        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{pts:.0f}</td></tr>")
+    for name, pts in ordered:
+        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
         rank += 1
+    # --- NUEVA FILA DE TOTAL (usa la suma que mostramos en el HUD / avisos) ---
+    total_used = float(sum(weights.values()))
+    rows.append(f"<tr><td></td><td><b>Total</b></td><td class='r'><b>{total_used:.2f}</b></td></tr>")
+    # ----------------------------------------------------------------------------
     table_html = f"""
     <div class='rowbox'>
       <div class='name center'>Ranking</div>
       <table class="rank">
-        <thead><tr><th>#</th><th>Indicator</th><th>Points</th></tr></thead>
+        <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
         <tbody>
           {''.join(rows)}
         </tbody>
@@ -374,20 +363,22 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
 
 # ───────── HUD FLOTANTE ─────────
-def render_floating_hud(used_points_value: float, pct_used: float):
+def render_floating_hud(used: float, rem: float, pct_used: float):
     pct = max(0.0, min(1.0, pct_used)) * 100.0
     st.markdown(f"""
     <div class="hud">
       <div class="hud-row">
-        <div class="hud-mono">{used_points_value:.0f}/100</div>
+        <div class="hud-mono">{used:.2f}/1.00</div>
         <div class="hud-spacer"></div>
         <div class="hud-bar"><div class="hud-fill" style="width:{pct:.2f}%"></div></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-pct_used = used_pts / TOTAL_POINTS if TOTAL_POINTS else 0.0
-render_floating_hud(used_pts, pct_used)
+used = float(sum(st.session_state.weights.values()))
+rem = remaining_points(st.session_state.weights)
+pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
+render_floating_hud(used, rem, pct_used)
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
@@ -400,7 +391,7 @@ cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 disabled_submit = (
     (not ok_email)
     or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 100 exacto
+    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00 exacto
     or st.session_state.saving
     or cooling
 )
@@ -430,7 +421,7 @@ with left:
                     try:
                         save_to_sheet(
                             st.session_state.email.strip(),
-                            st.session_state.weights,          # guarda [0,1]
+                            st.session_state.weights,
                             st.session_state.session_id,
                             indicator_order=indicators
                         )
@@ -438,7 +429,7 @@ with left:
                         st.session_state.submitted = True
                         st.session_state.status = "saved"
                         st.toast("Submitted. Thank you!", icon="✅")
-                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
+                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC  # ### NEW
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
@@ -456,13 +447,15 @@ with right:
     pass
 
 # ───────── STATUS ─────────
+# Prioridad: si hay “gracias” vigente, mostrarlo siempre unos segundos
 now_show = time.time()
-if now_show < st.session_state.get("thanks_expire", 0):
+if now_show < st.session_state.get("thanks_expire", 0):  # ### NEW
     status_box.success("✅ Submitted — Thank you!")
 elif st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
     if st.session_state.submitted:
+        # Nada extra; el label del botón ya cambia y el banner puede haber aparecido arriba
         pass
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
