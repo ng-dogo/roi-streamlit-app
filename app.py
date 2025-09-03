@@ -272,6 +272,44 @@ with right_align:
             st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
         st.rerun()
 
+# ───────── AVISO (rojo/verde) SEGÚN SUMA ─────────
+used = float(sum(st.session_state.weights.values()))
+rem = remaining_points(st.session_state.weights)
+
+if abs(rem) > EPS:
+    tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
+    st.markdown(
+        f"""
+        <div style="
+            margin:.75rem 0;
+            padding:.6rem .9rem;
+            border:1px solid rgba(217,48,37,.35);
+            background:rgba(217,48,37,.08);
+            border-radius:8px;
+            font-size:.95rem;
+            color:#b3261e;">
+            ⚠️ The weights must sum to 1.00. {tip} to continue.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        """
+        <div style="
+            margin:.75rem 0;
+            padding:.6rem .9rem;
+            border:1px solid rgba(16,127,70,.35);
+            background:rgba(16,127,70,.08);
+            border-radius:8px;
+            font-size:.95rem;
+            color:#0E7C66;">
+            ✅ The weights sum to <b>1.00</b>. You can submit.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.subheader("Allocation")
 
@@ -340,44 +378,6 @@ used = float(sum(st.session_state.weights.values()))
 rem = remaining_points(st.session_state.weights)
 pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
 render_floating_hud(used, rem, pct_used)
-
-# ───────── AVISO (rojo/verde) SEGÚN SUMA ─────────
-used = float(sum(st.session_state.weights.values()))
-rem = remaining_points(st.session_state.weights)
-
-if abs(rem) > EPS:
-    tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
-    st.markdown(
-        f"""
-        <div style="
-            margin:.75rem 0;
-            padding:.6rem .9rem;
-            border:1px solid rgba(217,48,37,.35);
-            background:rgba(217,48,37,.08);
-            border-radius:8px;
-            font-size:.95rem;
-            color:#b3261e;">
-            ⚠️ The weights must sum to 1.00. {tip} to continue.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        """
-        <div style="
-            margin:.75rem 0;
-            padding:.6rem .9rem;
-            border:1px solid rgba(16,127,70,.35);
-            background:rgba(16,127,70,.08);
-            border-radius:8px;
-            font-size:.95rem;
-            color:#0E7C66;">
-            ✅ The weights sum to <b>1.00</b>. You can submit.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
