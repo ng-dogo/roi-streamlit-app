@@ -41,7 +41,15 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 /* Tabla ranking minimalista (no widgets) */
 .rank{width:100%; border-collapse:collapse; font-size:.95rem}
 .rank th, .rank td{padding:.35rem .5rem; border-bottom:1px solid var(--border)}
-.rank th{font-weight:600; color:var(--muted); text-align:left}
+.rank th{
+  font-weight:600;
+  color:var(--muted);
+  text-align:center;
+}
+.rank td{
+  text-align:center;
+}
+
 .rank td.r{text-align:right}
 .small-note{font-size:.9rem;color:var(--muted);margin:.25rem 0 0}
 
