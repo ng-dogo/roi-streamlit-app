@@ -358,8 +358,8 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
 
-mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
-st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
+#mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
+#st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
 # ───────── HUD FLOTANTE ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
