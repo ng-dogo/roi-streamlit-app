@@ -19,49 +19,84 @@ CSS = """
 <style>
 :root{ --brand:#0E7C66; --muted:rgba(128,128,128,.85); --border:rgba(127,127,127,.18); }
 html, body, [class*="css"]{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;}
-.main .block-container{max-width:860px; padding-top:1rem; padding-bottom:1rem;}
-h1, h2, h3 { margin-bottom:.35rem; }
-hr{border:none;border-top:1px solid rgba(127,127,127,.22);margin:.5rem 0}
+.main .block-container{max-width:860px}
+
+/* Espaciados compactos */
+h1, h2, h3 { margin: .25rem 0 .5rem }
+hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:.6rem 0}
+
+/* Inputs y botones */
 .name{font-weight:600;margin:.2rem 0 .15rem}
-.rowbox{padding:.35rem .5rem;border-radius:10px;border:1px solid var(--border);}
+.rowbox{padding:.35rem .45rem;border-radius:10px;border:1px solid var(--border);}
+.center input[type=number]{text-align:center;font-weight:600}
 .stButton>button{background:var(--brand);color:#fff;border:none;border-radius:10px;padding:.45rem .9rem}
 .stButton>button:hover{filter:brightness(0.95)}
-.stButton>button:disabled{ background:#0b6b59;color:#fff;opacity:1;cursor:default; }
-.center input[type=number]{text-align:center;font-weight:600}
-.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.9rem;color:var(--muted)}
-.kpis{display:flex;gap:1rem;align-items:center}
-.kpis .strong{font-weight:700}
+.stButton>button:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:default}
 
-/* Tabla ranking minimalista */
-.rank { width:100%; border-collapse:collapse; font-size:.95rem; }
-.rank th, .rank td { padding:.3rem .5rem; border-bottom:1px solid var(--border); }
-.rank th { font-weight:600; color:var(--muted); text-align:center; }
-.rank td { text-align:left; }
-.rank td:first-child, .rank td:last-child { text-align:center; }
-.name.center { text-align:center; margin-bottom:.2rem; }
-.small-note{font-size:.9rem;color:var(--muted);margin:.15rem 0 0}
-.soft-divider{height:0;border-top:1px solid var(--border);margin:.35rem 0 .75rem}
+/* Allocation: tarjetas en grilla 2 columnas SIEMPRE, incluso en móvil */
+.alloc-grid{ display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.2rem }
+.alloc-card{
+  display:inline-block; vertical-align:top;
+  width:calc(50% - .3rem);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:.4rem .5rem;
+}
+.alloc-card .name{ margin:0 0 .25rem; font-size:.95rem; font-weight:600 }
+.alloc-card .rowbox{ border:none; padding:0 }  /* evitamos doble borde */
+@media (max-width: 420px){
+  .alloc-card{ width:calc(50% - .3rem) }  /* forzamos 2 col en pantallas chicas */
+}
 
-/* HUD flotante inferior */
+/* HUD flotante inferior (sin cambios funcionales) */
 .hud {
-  position: fixed; left: 12px; bottom: 12px; width: 60vw; max-width: 720px;
+  position: fixed; left: 12px; bottom: 12px; width: 65vw; max-width: 720px;
   background: rgba(255,255,255,.9); backdrop-filter: blur(6px);
   border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.08);
-  padding: .45rem .7rem; z-index: 9999;
+  padding: .5rem .75rem; z-index: 9999;
 }
 .dark .hud { background: rgba(28,28,28,.85) }
-.hud-row{ display:flex; align-items:center; gap:.65rem }
+.hud-row{ display:flex; align-items:center; gap:.75rem }
 .hud-mono{ font-variant-numeric: tabular-nums; font-weight:600 }
 .hud-spacer{ flex:1 }
-.hud-bar{ position:relative; height: 8px; background: rgba(127,127,127,.18); border-radius: 999px; overflow: hidden; width: 50%; }
-.hud-fill{ position:absolute; left:0; top:0; bottom:0; background: var(--brand); width: 0%; }
+.hud-bar{ position:relative; height:8px; background:rgba(127,127,127,.18); border-radius:999px; overflow:hidden; width:52% }
+.hud-fill{ position:absolute; left:0; top:0; bottom:0; background: var(--brand); width:0% }
 @media (hover:hover){ .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) } }
-@media (max-width: 480px){ .hud { bottom: 8px; padding: .4rem .55rem } }
+@media (max-width: 480px){ .hud { bottom: 8px; padding: .45rem .6rem } }
 @media (prefers-color-scheme: dark){
   .hud{ background: rgba(18,18,18,.85); border-color: rgba(255,255,255,.12); }
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
 }
+
+/* Tabla ranking minimalista */
+.rank { width:100%; border-collapse:collapse; font-size:.95rem; table-layout:fixed }
+.rank colgroup col:nth-child(1){ width:64px }
+.rank colgroup col:nth-child(3){ width:88px }
+.rank th, .rank td { padding:.35rem .5rem; border-bottom:1px solid var(--border); }
+.rank th { font-weight:600; color:var(--muted); text-align:center }
+.rank td { text-align:left }
+.rank td:first-child, .rank td:last-child { text-align:center }
+
+/* Título “Ranking” alineado con la columna “Indicator” */
+.rank thead .title-row th{ border-bottom:none; padding-bottom:.15rem }
+.rank thead .title-cell{ text-align:center; font-weight:700; color:var(--muted) }
+
+/* Avisos */
+.note-ok{
+  margin:.6rem 0 .2rem; padding:.5rem .75rem; border:1px solid rgba(12,131,44,.35);
+  background:rgba(12,131,44,.08); color:#0a7a2b; border-radius:8px; font-size:.95rem;
+}
+.note-warn{
+  margin:.6rem 0 .2rem; padding:.5rem .75rem; border:1px solid rgba(217,48,37,.35);
+  background:rgba(217,48,37,.08); color:#b3261e; border-radius:8px; font-size:.95rem;
+}
+
+/* Divisor suave */
+.soft-divider{height:0;border-top:1px solid var(--border);margin:.4rem 0 .8rem}
+
+/* Reducimos caption */
+.block-container .stCaption{ margin-top:.4rem }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -111,6 +146,7 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
+    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
     out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     return out
 
@@ -145,24 +181,19 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
 
+def make_on_change(comp: str):
+    """Versión 'suave': permite pasarse de 1.00; solo acota cada input a [0,1].
+       La validación estricta queda en el botón Submit."""
+    def _cb():
+        new_val = float(st.session_state.get(f"num_{comp}", 0.0))
+        new_val = max(0.0, min(1.0, new_val))
+        st.session_state.weights[comp] = float(np.round(new_val + 1e-9, 2))
+        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
+    return _cb
+
 def payload_hash(email: str, indicators: List[str], weights: Dict[str, float]) -> str:
     tpl = (email.strip().lower(), tuple(indicators), tuple(float(weights[k]) for k in indicators))
     return hashlib.sha256(repr(tpl).encode()).hexdigest()
-
-def sync_weights_from_inputs(indicators: List[str]) -> None:
-    """Si existen num_* en el estado (por cambios previos), sincroniza weights antes de pintar Ranking."""
-    changed = False
-    for comp in indicators:
-        key = f"num_{comp}"
-        if key in st.session_state:
-            new_val = float(st.session_state[key])
-            new_val = float(np.clip(np.round(new_val + 1e-9, 2), 0.0, 1.0))
-            if st.session_state.weights.get(comp) != new_val:
-                st.session_state.weights[comp] = new_val
-                changed = True
-    if changed:
-        # nada más; Ranking y warning se recalcularán con estos valores
-        pass
 
 @st.cache_resource(show_spinner=False)
 def get_worksheet():
@@ -201,7 +232,7 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
     # 1) Encabezado una sola vez
     _ensure_header_once(sh, headers)
 
-    # 2) Construir fila
+    # 2) Fila
     row = (
         [dt.datetime.now().isoformat(), email, session_id]
         + [float(np.round(weights[k], 2)) for k in indicator_order]
@@ -235,7 +266,6 @@ if not st.session_state.weights:
     st.session_state.weights = dict(defaults_cents)
     st.session_state._init_inputs = True
 else:
-    # conservar orden estable
     indicators = list(st.session_state.weights.keys())
 
 # ───────── UI ─────────
@@ -244,7 +274,7 @@ st.title("RGI – Budget Allocation Points")
 # Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
 
-# Divisor suave + Reset
+# Línea suave + Reset a la derecha
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 right_align = st.columns([3,1])[1]
 with right_align:
@@ -254,40 +284,13 @@ with right_align:
             st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
         st.rerun()
 
-st.markdown("<hr/>", unsafe_allow_html=True)
-
-# ───────── SYNC weights desde inputs (para que Ranking esté al día aun si está arriba) ─────────
+# Prepara valores iniciales de inputs si es la primera carga
 if st.session_state.get("_init_inputs"):
     for comp in indicators:
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
-# Sincroniza si hay cambios tipeados
-sync_weights_from_inputs(indicators)
 
-# ───────── LIVE RANKING (va ANTES del allocation) ─────────
-def render_ranking_html(weights: Dict[str, float]) -> None:
-    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
-    rows = []
-    rank = 1
-    for name, pts in ordered:
-        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
-        rank += 1
-    table_html = f"""
-    <div class='rowbox'>
-      <div class='name center'>Ranking</div>
-      <table class="rank">
-        <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
-        <tbody>
-          {''.join(rows)}
-        </tbody>
-      </table>
-    </div>
-    """
-    st.markdown(table_html, unsafe_allow_html=True)
-
-render_ranking_html(st.session_state.weights)
-
-# ───────── HUD FLOTANTE ─────────
+# ───────── HUD (muestra uso total) ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
     pct = max(0.0, min(1.0, pct_used)) * 100.0
     st.markdown(f"""
@@ -295,9 +298,7 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
       <div class="hud-row">
         <div class="hud-mono">{used:.2f}/1.00</div>
         <div class="hud-spacer"></div>
-        <div class="hud-bar">
-          <div class="hud-fill" style="width:{pct:.2f}%"></div>
-        </div>
+        <div class="hud-bar"><div class="hud-fill" style="width:{pct:.2f}%"></div></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -307,55 +308,25 @@ rem = remaining_points(st.session_state.weights)
 pct_used = used / TOTAL_POINTS if TOTAL_POINTS else 0.0
 render_floating_hud(used, rem, pct_used)
 
-# Memoria (debug)
-mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
-st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
-
-# ───────── WARNING entre Ranking y Allocation ─────────
-used = float(sum(st.session_state.weights.values()))
-rem = remaining_points(st.session_state.weights)
-if abs(rem) > EPS:
+# ───────── WARNING (arriba de Allocation) ─────────
+if abs(rem) <= EPS:
+    st.markdown(f"<div class='note-ok'>✅ The weights sum to 1.00. You can submit.</div>", unsafe_allow_html=True)
+else:
     tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
     st.markdown(
-        f"""
-        <div style="
-            margin:.6rem 0 .4rem;
-            padding:.55rem .8rem;
-            border:1px solid rgba(217,48,37,.35);
-            background:rgba(217,48,37,.08);
-            border-radius:8px;
-            font-size:.95rem;
-            color:#b3261e;">
-            ⚠️ The weights must sum to 1.00. {tip} to continue.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        f"""
-        <div style="
-            margin:.6rem 0 .4rem;
-            padding:.55rem .8rem;
-            border:1px solid rgba(12,160,44,.35);
-            background:rgba(12,160,44,.08);
-            border-radius:8px;
-            font-size:.95rem;
-            color:#0b7a2b;">
-            ✅ Perfect — The weights sum to 1.00.
-        </div>
-        """,
+        f"<div class='note-warn'>⚠️ The weights must sum to 1.00. {tip} to continue.</div>",
         unsafe_allow_html=True
     )
 
-# ───────── ALLOCATION (ahora en dos columnas) ─────────
+# ───────── ALLOCATION (dos columnas SIEMPRE) ─────────
 st.subheader("Allocation")
-
-# Nota: Permitimos superar 1.00; el submit controla la validación.
-def render_input(comp: str):
+st.markdown("<div class='alloc-grid'>", unsafe_allow_html=True)
+for comp in indicators:
+    # Tarjeta contenedora
+    st.markdown("<div class='alloc-card'>", unsafe_allow_html=True)
     st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
     st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-    val = st.number_input(
+    st.number_input(
         label="",
         key=f"num_{comp}",
         min_value=0.0,
@@ -363,24 +334,41 @@ def render_input(comp: str):
         step=0.01,
         format="%.2f",
         label_visibility="collapsed",
+        on_change=make_on_change(comp),
         disabled=st.session_state.saving
     )
-    # Sincroniza inmediatamente el diccionario (permitimos exceder 1.00)
-    st.session_state.weights[comp] = float(np.clip(np.round(val + 1e-9, 2), 0.0, 1.0))
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)   # cierra .rowbox
+    st.markdown("</div>", unsafe_allow_html=True)   # cierra .alloc-card
+st.markdown("</div>", unsafe_allow_html=True)       # cierra .alloc-grid
 
-# Dos columnas, 2 indicadores por fila (para 8 → 4 filas)
-for i in range(0, len(indicators), 2):
-    c1, c2 = st.columns(2)
-    with c1:
-        render_input(indicators[i])
-    if i + 1 < len(indicators):
-        with c2:
-            render_input(indicators[i+1])
+# ───────── RANKING (entre Allocation y Submit) ─────────
+def render_ranking_html(weights: Dict[str, float]) -> None:
+    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
+    rows = []
+    for i, (name, pts) in enumerate(ordered, start=1):
+        rows.append(f"<tr><td>{i}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
+    table_html = f"""
+    <div class='rowbox' style="margin-top:.6rem">
+      <table class="rank">
+        <colgroup><col/><col/><col/></colgroup>
+        <thead>
+          <tr class="title-row"><th></th><th class="title-cell">Ranking</th><th></th></tr>
+          <tr><th>#</th><th>Indicator</th><th>Weight</th></tr>
+        </thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+
+render_ranking_html(st.session_state.weights)
+
+# Memoria (opcional, ayuda para monitorear)
+mem_mb = psutil.Process(os.getpid()).memory_info().rss / (1024*1024)
+st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
 # ───────── FOOTER / SUBMIT ─────────
 st.markdown("<hr/>", unsafe_allow_html=True)
-
 email_raw = st.session_state.email or ""
 email_norm = email_raw.strip()
 ok_email = bool(EMAIL_RE.match(email_norm))
@@ -390,7 +378,7 @@ cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 disabled_submit = (
     (not ok_email)
     or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)  # requiere sumar 1.00 exacto
+    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00
     or st.session_state.saving
     or cooling
 )
