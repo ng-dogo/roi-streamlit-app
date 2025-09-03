@@ -101,6 +101,33 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   /* .hud-fill{ background: #0fb58f; } */
 }
 
+/* — HUD en modo “warning” cuando no suma 1.00 — */
+.hud.warn{
+  border-color: rgba(217,48,37,.35);
+  box-shadow: 0 6px 20px rgba(217,48,37,.08);
+}
+.hud-msg{
+  font-size:.9rem;
+  color:#d93025;
+  margin-left:.25rem;
+  white-space:nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.hud-fill.warn{
+  box-shadow: inset 0 0 0 2px rgba(217,48,37,.25);
+}
+@media (prefers-color-scheme: dark){
+  .hud.warn{
+    border-color: rgba(255,99,71,.35);
+    box-shadow: 0 6px 20px rgba(255,99,71,.10);
+  }
+  .hud-msg{ color: #ff6b57; }
+  .hud-fill.warn{
+    box-shadow: inset 0 0 0 2px rgba(255,99,71,.30);
+  }
+}
+
+
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -353,18 +380,36 @@ st.caption(f"RAM usada por el proceso: {mem_mb:.1f} MB")
 
 # ───────── HUD FLOTANTE (Opción A) ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
+    need_fix = abs(rem) > EPS
     pct = max(0.0, min(1.0, pct_used)) * 100.0
+
+    # Mensaje breve y accionable
+    if need_fix:
+        if rem > 0:
+            tip = f"Add {rem:.2f}"
+        else:
+            tip = f"Remove {abs(rem):.2f}"
+        msg_html = f"<span class='hud-msg'>⚠️ Sum to 1.00 — {tip}</span>"
+        hud_class = "hud warn"
+        fill_class = "hud-fill warn"
+    else:
+        msg_html = ""
+        hud_class = "hud"
+        fill_class = "hud-fill"
+
     st.markdown(f"""
-    <div class="hud">
+    <div class="{hud_class}">
       <div class="hud-row">
-        <div class="hud-mono">{used:.2f}/{(used+(1-used)):.2f}</div>
+        <div class="hud-mono">{used:.2f}/1.00</div>
         <div class="hud-spacer"></div>
         <div class="hud-bar">
-          <div class="hud-fill" style="width:{pct:.2f}%"></div>
+          <div class="{fill_class}" style="width:{pct:.2f}%"></div>
         </div>
+        {msg_html}
       </div>
     </div>
     """, unsafe_allow_html=True)
+
 
 # Calculamos métricas y pintamos HUD (sin usar st.progress)
 used = float(sum(st.session_state.weights.values()))
