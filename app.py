@@ -101,32 +101,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   /* .hud-fill{ background: #0fb58f; } */
 }
 
-/* — HUD en modo “warning” cuando no suma 1.00 — */
-.hud.warn{
-  border-color: rgba(217,48,37,.35);
-  box-shadow: 0 6px 20px rgba(217,48,37,.08);
-}
-.hud-msg{
-  font-size:.9rem;
-  color:#d93025;
-  margin-left:.25rem;
-  white-space:nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.hud-fill.warn{
-  box-shadow: inset 0 0 0 2px rgba(217,48,37,.25);
-}
-@media (prefers-color-scheme: dark){
-  .hud.warn{
-    border-color: rgba(255,99,71,.35);
-    box-shadow: 0 6px 20px rgba(255,99,71,.10);
-  }
-  .hud-msg{ color: #ff6b57; }
-  .hud-fill.warn{
-    box-shadow: inset 0 0 0 2px rgba(255,99,71,.30);
-  }
-}
-
 
 </style>
 """
@@ -383,32 +357,57 @@ def render_floating_hud(used: float, rem: float, pct_used: float):
     need_fix = abs(rem) > EPS
     pct = max(0.0, min(1.0, pct_used)) * 100.0
 
-    # Mensaje breve y accionable
+    # estilos base del contenedor
+    base_style = (
+        "position:fixed;left:12px;bottom:12px;width:65vw;max-width:720px;"
+        "background:rgba(255,255,255,.9);backdrop-filter:blur(6px);"
+        "border:1px solid rgba(127,127,127,.18);border-radius:12px;"
+        "box-shadow:0 6px 20px rgba(0,0,0,.08);padding:.5rem .75rem;z-index:9999;"
+    )
+
+    # si no suma 1.00, forzamos borde y sombra rojiza con inline styles
+    warn_extra = "" if not need_fix else (
+        "border-color:rgba(217,48,37,.35) !important;"
+        "box-shadow:0 6px 20px rgba(217,48,37,.12) !important;"
+    )
+
+    # barrita de progreso
+    bar_style = (
+        "position:relative;height:8px;background:rgba(127,127,127,.18);"
+        "border-radius:999px;overflow:hidden;width:52%;"
+    )
+
+    fill_style = (
+        f"position:absolute;left:0;top:0;bottom:0;background:var(--brand);width:{pct:.2f}%;"
+        + ("" if not need_fix else "box-shadow:inset 0 0 0 2px rgba(217,48,37,.25);")
+    )
+
+    # mensaje “Add/Remove” si falta o sobra
     if need_fix:
-        if rem > 0:
-            tip = f"Add {rem:.2f}"
-        else:
-            tip = f"Remove {abs(rem):.2f}"
-        msg_html = f"<span class='hud-msg'>⚠️ Sum to 1.00 — {tip}</span>"
-        hud_class = "hud warn"
-        fill_class = "hud-fill warn"
+        tip = f"Add {rem:.2f}" if rem > 0 else f"Remove {abs(rem):.2f}"
+        msg_html = (
+            "<span style=\"font-size:.9rem;color:#d93025;margin-left:.35rem;"
+            "white-space:nowrap;font-variant-numeric:tabular-nums\">"
+            f"⚠️ Sum to 1.00 — {tip}</span>"
+        )
     else:
         msg_html = ""
-        hud_class = "hud"
-        fill_class = "hud-fill"
 
-    st.markdown(f"""
-    <div class="{hud_class}">
-      <div class="hud-row">
-        <div class="hud-mono">{used:.2f}/1.00</div>
-        <div class="hud-spacer"></div>
-        <div class="hud-bar">
-          <div class="{fill_class}" style="width:{pct:.2f}%"></div>
+    st.markdown(
+        f"""
+        <div style="{base_style}{warn_extra}">
+          <div style="display:flex;align-items:center;gap:.75rem">
+            <div style="font-variant-numeric:tabular-nums;font-weight:600">{used:.2f}/1.00</div>
+            <div style="flex:1"></div>
+            <div style="{bar_style}">
+              <div style="{fill_style}"></div>
+            </div>
+            {msg_html}
+          </div>
         </div>
-        {msg_html}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True
+    )
 
 
 # Calculamos métricas y pintamos HUD (sin usar st.progress)
