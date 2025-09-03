@@ -495,7 +495,7 @@ if st.session_state.get("saving", False):
 else:
     if st.session_state.submitted:
         # Botón ya indica éxito; nota opcional
-        status_box.success("Your response was received and will appear in the log shortly.")
+        status_box.success("Your response was received.")
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
         st.session_state.status = "idle"
