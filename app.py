@@ -343,7 +343,6 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
         rank += 1
     table_html = f"""
     <div class='rowbox'>
-      <div class='name'>Ranking</div>
       <table class="rank">
         <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
         <tbody>
