@@ -490,7 +490,8 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 
     used_total = float(sum(weights.values()))
     is_ok = abs(used_total - TOTAL_POINTS) <= EPS
-    total_row_style = "" if is_ok else " style=\\"color:#b3261e;background:rgba(217,48,37,.08);\\""
+    # ✅ usar comillas simples afuera y dobles adentro (sin escapes)
+    total_row_style = '' if is_ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
     rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
 
     table_html = f"""
@@ -505,6 +506,7 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
     </div>
     """
     st.markdown(table_html, unsafe_allow_html=True)
+
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
