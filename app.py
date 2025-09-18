@@ -419,10 +419,10 @@ def render_compact_table(weights: Dict[str, float]) -> None:
     with h1:
         st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
     with h2:
-        st.markdown("<div class='mini head' style='text-align:right'>Weight</div>", unsafe_allow_html=True)
+        st.markdown("<div class='mini head' style='text-align:left'>Weight</div>", unsafe_allow_html=True)
     with h3:
         # Centrado para que quede sobre los dos botones
-        st.markdown("<div class='mini head' style='text-align:center'>Adjust</div>", unsafe_allow_html=True)
+        st.markdown("<div class='mini head' style='text-align:left'>Adjust</div>", unsafe_allow_html=True)
 
     # Filas: (podés dejar el orden como tengas; acá lo dejo por peso desc)
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
