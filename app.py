@@ -284,22 +284,36 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
             time.sleep(sleep_s)
 
 # ───────── LOAD DEFAULTS ─────────
+# ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
-    indicator_order = df["indicator"].tolist()           # ← orden original del CSV
-    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    defaults_cents = round_to_cents_preserve_total(defaults_raw)
+
+    # Orden original del CSV
+    indicator_order = df["indicator"].tolist()
+
+    # 👉 Guía: valores EXACTOS del CSV (sin redondeo/ajustes)
+    guide_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    st.session_state.guide_weights = dict(guide_raw)                   # <- para mostrar en el ranking
+    st.session_state.guide_total = float(sum(st.session_state.guide_weights.values()))
+    st.session_state.indicator_order = indicator_order
+
+    # Pesos “editables” que usa la UI (podés mantener tu redondeo a centésimas aquí)
+    defaults_cents = round_to_cents_preserve_total(guide_raw)
     st.session_state.defaults = defaults_cents
     st.session_state.weights = dict(defaults_cents)
-    st.session_state.indicator_order = indicator_order   # ← guardamos orden CSV
+
     st.session_state._init_inputs = True
 else:
-    if not st.session_state.indicator_order:
-        # fallback: si ya había pesos, usamos ese orden
+    if "indicator_order" not in st.session_state or not st.session_state.indicator_order:
         st.session_state.indicator_order = list(st.session_state.weights.keys())
+    # fallback por si no existía (por compatibilidad con sesiones viejas)
+    if "guide_weights" not in st.session_state or not st.session_state.guide_weights:
+        st.session_state.guide_weights = dict(st.session_state.defaults)
+        st.session_state.guide_total = float(sum(st.session_state.guide_weights.values()))
 
 # Alias local para usar en guardado
 indicators = st.session_state.indicator_order
+
 
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
@@ -430,16 +444,20 @@ lock_total = st.toggle("Lock total at 1.00", value=False,
 render_compact_table(st.session_state.weights, lock_total)
 
 # ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
-def render_ranking_html(weights: Dict[str, float]) -> None:
-    # Usamos el orden del CSV guardado en session_state.indicator_order
+# ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
+def render_ranking_html_fixed() -> None:
     rows = []
     rank = 1
-    for name in st.session_state.indicator_order:
-        pts = weights.get(name, 0.0)
-        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
+    guide = st.session_state.guide_weights
+    order = st.session_state.indicator_order
+
+    for name in order:
+        pts = guide.get(name, 0.0)
+        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{pts:.2f}</td></tr>")
         rank += 1
 
-    used_total = float(sum(weights.values()))
+    used_total = float(st.session_state.guide_total)
+    # siempre calculado contra el total CSV (guía), no contra lo que edita la persona
     is_ok = abs(used_total - TOTAL_POINTS) <= EPS
     total_row_style = '' if is_ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
     rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
@@ -458,7 +476,8 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
     st.markdown(table_html, unsafe_allow_html=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-render_ranking_html(st.session_state.weights)
+render_ranking_html_fixed()
+
 
 # ───────── HUD FLOTANTE ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
