@@ -99,12 +99,6 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 </style>
 """
 
-st.markdown("""
-<style>
-/* Asegura centrado del encabezado y altura compacta de los botones */
-.mini .stButton > button { min-height: 32px; }
-</style>
-""", unsafe_allow_html=True)
 
 st.markdown(CSS, unsafe_allow_html=True)
 
