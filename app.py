@@ -364,7 +364,9 @@ else:
     )
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.subheader("Allocation (compact)")
+left, mid, right = st.columns([1, 2, 1])
+with mid:
+    st.subheader("Allocation")
 
 # ───────── COMPACT TABLE WITH +/- ─────────
 STEP = 0.01
