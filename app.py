@@ -87,6 +87,15 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
 }
+
+/* Compact table custom styles */
+.mini { font-size: .92rem; }
+.mini .head { color: var(--muted); font-weight:600; border-bottom:1px solid var(--border); padding:.25rem .4rem; }
+.mini .row  { border-bottom:1px solid var(--border); padding:.25rem .4rem; }
+.mini .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mini .wgt  { text-align:right; font-variant-numeric: tabular-nums; font-weight:600; }
+.mini .btn  { text-align:right; }
+.mini .stButton>button{ padding:.15rem .4rem; border-radius:8px; min-height:auto }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -171,11 +180,10 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
 
-# *** CAMBIO CLAVE: callback sin tope global (permite pasar de 1) ***
+# *** callback para inputs numéricos (no usado en la tabla compacta, lo dejamos por compatibilidad) ***
 def make_on_change(comp: str):
     def _cb():
         new_val = float(st.session_state.get(f"num_{comp}", 0.0))
-        # clamp individual en [0,1] y redondeo a 2 decimales
         new_val = float(np.round(min(max(new_val, 0.0), 1.0) + 1e-9, 2))
         st.session_state.weights[comp] = new_val
         st.session_state[f"num_{comp}"] = new_val
@@ -311,28 +319,106 @@ else:
     )
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.subheader("Allocation")
+st.subheader("Allocation (compact)")
 
-if st.session_state.get("_init_inputs"):
-    for comp in indicators:
-        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
-    st.session_state._init_inputs = False
+# ───────── COMPACT TABLE WITH +/- ─────────
+STEP = 0.01
 
-for comp in indicators:
-    st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-    st.number_input(
-        label="",
-        key=f"num_{comp}",
-        min_value=0.0,
-        max_value=1.0,
-        step=0.01,
-        format="%.2f",
-        label_visibility="collapsed",
-        on_change=make_on_change(comp),
-        disabled=st.session_state.saving
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+def _clamp01(x: float) -> float:
+    return float(np.round(min(max(x, 0.0), 1.0) + 1e-9, 2))
+
+def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict[str, float]:
+    """
+    Ajusta otras filas para compensar delta en 'target' y mantener suma = 1.00.
+    1) Proporcional a sus pesos respetando límites [0,1].
+    2) Pase greedy a centésimas si queda residuo por redondeos/saturaciones.
+    """
+    w = dict(weights)
+    total_before = sum(w.values())
+    w[target] = _clamp01(w[target] + delta)
+
+    diff = total_before - sum(w.values())  # >0: hay que sumar a otros; <0: quitar a otros
+    if abs(diff) < 1e-9:
+        return w
+
+    others = [k for k in w.keys() if k != target]
+    if not others:
+        return w
+
+    pool = sum(w[k] for k in others)
+
+    # Pase proporcional
+    if pool > 1e-12:
+        for k in others:
+            prop = (w[k] / pool) if pool > 0 else (1.0 / len(others))
+            adj = diff * prop
+            newv = _clamp01(w[k] + adj)
+            diff -= (newv - w[k])
+            w[k] = newv
+
+    # Pase greedy si quedó residuo apreciable
+    if abs(diff) >= (STEP/2):
+        if diff > 0:
+            order = sorted(others, key=lambda k: (1.0 - w[k]), reverse=True)  # más espacio hacia arriba
+            step_sign = +STEP
+            can_move = lambda k: w[k] < 1.0 - 1e-9
+        else:
+            order = sorted(others, key=lambda k: w[k], reverse=True)         # más grandes primero
+            step_sign = -STEP
+            can_move = lambda k: w[k] > 0.0 + 1e-9
+
+        safety = 20000
+        i = 0
+        while abs(diff) >= (STEP/2) and i < safety:
+            moved = False
+            for k in order:
+                if abs(diff) < (STEP/2): break
+                if not can_move(k): continue
+                newv = _clamp01(w[k] + step_sign)
+                if abs(newv - w[k]) >= 1e-12:
+                    w[k] = newv
+                    # recalcular residuo exacto para evitar drift
+                    diff = total_before - sum(w.values())
+                    moved = True
+            if not moved:
+                break
+            i += 1
+
+    return w
+
+def render_compact_table(weights: Dict[str, float], lock_total: bool) -> None:
+    # encabezados
+    h1, h2, h3 = st.columns([6,2,3])
+    with h1: st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
+    with h2: st.markdown("<div class='mini head' style='text-align:right'>Weight</div>", unsafe_allow_html=True)
+    with h3: st.markdown("<div class='mini head' style='text-align:right'>Adjust</div>", unsafe_allow_html=True)
+
+    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
+
+    for name, val in ordered:
+        c1, c2, c3 = st.columns([6,2,3])
+        with c1:
+            st.markdown(f"<div class='mini row name'>{name}</div>", unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"<div class='mini row wgt'>{float(val):.2f}</div>", unsafe_allow_html=True)
+        with c3:
+            b1, b2 = st.columns(2)
+            dec = b1.button("−", key=f"dec_{name}", disabled=st.session_state.saving)
+            inc = b2.button("＋", key=f"inc_{name}", disabled=st.session_state.saving)
+            if dec or inc:
+                delta = (-STEP if dec else STEP)
+                if lock_total:
+                    st.session_state.weights = _adjust_others(st.session_state.weights, name, delta)
+                else:
+                    st.session_state.weights[name] = _clamp01(st.session_state.weights[name] + delta)
+                st.rerun()
+
+# Toggle para mantener suma exacta
+lock_total = st.toggle("Lock total at 1.00", value=False,
+                       help="Ajusta automáticamente el resto para que la suma se mantenga en 1.00")
+
+# Render tabla compacta
+render_compact_table(st.session_state.weights, lock_total)
 
 # ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
@@ -343,7 +429,6 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
         rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
         rank += 1
 
-    # --- Fila TOTAL (roja si != 1.00) ---
     used_total = float(sum(weights.values()))
     is_ok = abs(used_total - TOTAL_POINTS) <= EPS
     total_row_style = "" if is_ok else " style=\"color:#b3261e;background:rgba(217,48,37,.08);\""
@@ -432,7 +517,7 @@ with left:
                         st.session_state.submitted = True
                         st.session_state.status = "saved"
                         st.toast("Submitted. Thank you!", icon="✅")
-                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC  # ### NEW
+                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
@@ -450,15 +535,13 @@ with right:
     pass
 
 # ───────── STATUS ─────────
-# Prioridad: si hay “gracias” vigente, mostrarlo siempre unos segundos
 now_show = time.time()
-if now_show < st.session_state.get("thanks_expire", 0):  # ### NEW
+if now_show < st.session_state.get("thanks_expire", 0):
     status_box.success("✅ Submitted — Thank you!")
 elif st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
     if st.session_state.submitted:
-        # Nada extra; el label del botón ya cambia y el banner puede haber aparecido arriba
         pass
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
