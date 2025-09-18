@@ -136,7 +136,6 @@ if "thanks_expire" not in st.session_state:
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
-@st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         raise FileNotFoundError(
@@ -168,7 +167,6 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
                 last_err = e
                 continue
             except Exception as e:
-                # otros errores (p. ej. parseo) → seguimos intentando con otra encoding
                 last_err = e
                 continue
         if df is None:
@@ -201,6 +199,42 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     )
     return out
 
+# --- util: redondear a centésimas preservando suma = 1.00 ---
+def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
+    """
+    Redondea cada peso a 0.01 y ajusta mínimamente para que la suma total sea 1.00 exacto.
+    Acepta dict {nombre_indicador: peso_en_[0,1]} y devuelve otro dict con las mismas claves.
+    """
+    if not weights:
+        return {}
+    total = float(sum(weights.values()))
+    if total <= 0:
+        n = max(1, len(weights))
+        cents_each = int(round(100 / n))
+        cents = [cents_each] * n
+        diff = 100 - sum(cents)
+        for i in range(abs(diff)):
+            idx = i % n
+            cents[idx] += 1 if diff > 0 else -1
+        return {k: v/100.0 for k, v in zip(weights.keys(), cents)}
+
+    # escala a centésimas y redondea
+    scaled = {k: 100.0 * (v / total) for k, v in weights.items()}
+    rounded = {k: int(np.floor(s + 0.5)) for k, s in scaled.items()}
+
+    # corrige residuo para que sume 100 exacto
+    resid = {k: (scaled[k] - rounded[k]) for k in weights}
+    diff = 100 - sum(rounded.values())
+    if diff > 0:
+        order = sorted(weights.keys(), key=lambda k: resid[k], reverse=True)
+        for k in order[:diff]:
+            rounded[k] += 1
+    elif diff < 0:
+        order = sorted(weights.keys(), key=lambda k: resid[k])
+        for k in order[:abs(diff)]:
+            rounded[k] -= 1
+
+    return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
@@ -456,7 +490,7 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
 
     used_total = float(sum(weights.values()))
     is_ok = abs(used_total - TOTAL_POINTS) <= EPS
-    total_row_style = "" if is_ok else " style=\"color:#b3261e;background:rgba(217,48,37,.08);\""
+    total_row_style = "" if is_ok else " style=\\"color:#b3261e;background:rgba(217,48,37,.08);\\""
     rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
 
     table_html = f"""
