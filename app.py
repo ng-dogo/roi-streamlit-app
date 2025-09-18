@@ -288,31 +288,30 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
 
-    # Orden original del CSV
+    # Orden original del CSV (lo usamos para guardar en Sheets)
     indicator_order = df["indicator"].tolist()
-
-    # 👉 Guía: valores EXACTOS del CSV (sin redondeo/ajustes)
-    guide_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    st.session_state.guide_weights = dict(guide_raw)                   # <- para mostrar en el ranking
-    st.session_state.guide_total = float(sum(st.session_state.guide_weights.values()))
     st.session_state.indicator_order = indicator_order
 
-    # Pesos “editables” que usa la UI (podés mantener tu redondeo a centésimas aquí)
-    defaults_cents = round_to_cents_preserve_total(guide_raw)
-    st.session_state.defaults = defaults_cents
+    # Pesos EXACTOS tal cual vienen del CSV → para el ranking fijo
+    defaults_csv = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    st.session_state.defaults_csv = dict(defaults_csv)
+
+    # Pesos "editables" (parte interactiva) → redondeados a centésimas y suma = 1.00
+    defaults_cents = round_to_cents_preserve_total(defaults_csv)
+    st.session_state.defaults = dict(defaults_cents)
     st.session_state.weights = dict(defaults_cents)
 
     st.session_state._init_inputs = True
 else:
+    # Fallbacks por si venís de una sesión vieja
     if "indicator_order" not in st.session_state or not st.session_state.indicator_order:
         st.session_state.indicator_order = list(st.session_state.weights.keys())
-    # fallback por si no existía (por compatibilidad con sesiones viejas)
-    if "guide_weights" not in st.session_state or not st.session_state.guide_weights:
-        st.session_state.guide_weights = dict(st.session_state.defaults)
-        st.session_state.guide_total = float(sum(st.session_state.guide_weights.values()))
+    if "defaults_csv" not in st.session_state or not st.session_state.defaults_csv:
+        st.session_state.defaults_csv = dict(st.session_state.defaults)
 
-# Alias local para usar en guardado
+# Alias local para usar en el guardado
 indicators = st.session_state.indicator_order
+
 
 
 # ───────── UI ─────────
@@ -445,22 +444,19 @@ render_compact_table(st.session_state.weights, lock_total)
 
 # ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
 # ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
+# ───────── LIVE RANKING (FIJO SEGÚN CSV, ORDENADO DESC) ─────────
 def render_ranking_html_fixed() -> None:
+    base = st.session_state.defaults_csv  # pesos crudos del CSV
+    # Orden: peso descendente y, ante empate, alfabético
+    ordered = sorted(base.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
+
     rows = []
-    rank = 1
-    guide = st.session_state.guide_weights
-    order = st.session_state.indicator_order
+    for idx, (name, pts) in enumerate(ordered, start=1):
+        rows.append(f"<tr><td>{idx}</td><td>{name}</td><td class='r'>{pts:.2f}</td></tr>")
 
-    for name in order:
-        pts = guide.get(name, 0.0)
-        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{pts:.2f}</td></tr>")
-        rank += 1
-
-    used_total = float(st.session_state.guide_total)
-    # siempre calculado contra el total CSV (guía), no contra lo que edita la persona
-    is_ok = abs(used_total - TOTAL_POINTS) <= EPS
-    total_row_style = '' if is_ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
-    rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
+    total_csv = float(sum(base.values()))
+    total_row_style = '' if abs(total_csv - 1.0) <= EPS else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
+    rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{total_csv:.2f}</b></td></tr>")
 
     table_html = f"""
     <div class='rowbox'>
@@ -477,6 +473,7 @@ def render_ranking_html_fixed() -> None:
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html_fixed()
+
 
 
 # ───────── HUD FLOTANTE ─────────
