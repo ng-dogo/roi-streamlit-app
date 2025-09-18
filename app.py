@@ -136,46 +136,71 @@ if "thanks_expire" not in st.session_state:
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
+@st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, encoding="utf-8-sig")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"No se encontró el archivo de defaults en: {path}. "
+            "Definí la variable de entorno RGI_DEFAULTS_CSV o subí el archivo."
+        )
+
+    ext = os.path.splitext(path)[1].lower()
+
+    # 1) Excel (exportado desde Sheets/Excel)
+    if ext in (".xlsx", ".xls"):
+        df = pd.read_excel(path)
+    else:
+        # 2) CSV: probamos codificaciones típicas y dejamos que infiera el delimitador
+        enc_try = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
+        last_err = None
+        df = None
+        for enc in enc_try:
+            try:
+                df = pd.read_csv(
+                    path,
+                    encoding=enc,
+                    encoding_errors="replace",  # pandas >=1.5
+                    sep=None,                   # infiere coma/; /tab
+                    engine="python"             # requerido para sep=None
+                )
+                break
+            except UnicodeDecodeError as e:
+                last_err = e
+                continue
+            except Exception as e:
+                # otros errores (p. ej. parseo) → seguimos intentando con otra encoding
+                last_err = e
+                continue
+        if df is None:
+            raise RuntimeError(
+                f"No pude leer el archivo CSV con las codificaciones {enc_try}. "
+                f"Último error: {last_err}"
+            )
+
+    # Normalización de columnas esperadas
     cols = [c.strip().lower() for c in df.columns]
+    if not cols:
+        raise ValueError("El archivo de defaults no tiene columnas.")
+
     df.columns = cols
     name_col = "indicator" if "indicator" in cols else cols[0]
-    weight_col = "avg_weight" if "avg_weight" in cols else cols[1]
+    weight_col = "avg_weight" if "avg_weight" in cols else (cols[1] if len(cols) > 1 else None)
+
+    if weight_col is None:
+        raise ValueError(
+            "No se encontró columna de pesos. Esperaba columnas: 'indicator' y 'avg_weight'."
+        )
+
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
-    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
+    out["avg_weight"] = (
+        pd.to_numeric(out["avg_weight"], errors="coerce")
+        .clip(lower=0.0, upper=1.0)
+        .fillna(0.0)
+    )
     return out
 
-def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
-    """Redondea a 0.01 manteniendo suma exacta = 1.00 (en centésimas)."""
-    if not weights:
-        return {}
-    total = float(sum(weights.values()))
-    if total <= 0:
-        n = max(1, len(weights))
-        cents_each = int(round(100 / n))
-        cents = [cents_each]*n
-        diff = 100 - sum(cents)
-        for i in range(abs(diff)):
-            idx = i % n
-            cents[idx] += 1 if diff > 0 else -1
-        return {k: v/100.0 for k, v in zip(weights.keys(), cents)}
-    scaled = {k: 100.0 * (v / total) for k, v in weights.items()}
-    rounded = {k: int(np.floor(s + 0.5)) for k, s in scaled.items()}
-    resid = {k: (scaled[k] - rounded[k]) for k in weights}
-    diff = 100 - sum(rounded.values())
-    if diff > 0:
-        order = sorted(weights.keys(), key=lambda k: resid[k], reverse=True)
-        for k in order[:diff]:
-            rounded[k] += 1
-    elif diff < 0:
-        order = sorted(weights.keys(), key=lambda k: resid[k])
-        for k in order[:abs(diff)]:
-            rounded[k] -= 1
-    return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
