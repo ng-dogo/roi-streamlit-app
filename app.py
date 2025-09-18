@@ -87,19 +87,8 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
 }
-
-/* Compact table custom styles */
-.mini { font-size: .92rem; }
-.mini .head { color: var(--muted); font-weight:600; border-bottom:1px solid var(--border); padding:.25rem .4rem; }
-.mini .row  { border-bottom:1px solid var(--border); padding:.25rem .4rem; }
-.mini .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mini .wgt  { text-align:right; font-variant-numeric: tabular-nums; font-weight:600; }
-.mini .btn  { text-align:right; }
-.mini .stButton>button{ padding:.15rem .4rem; border-radius:8px; min-height:auto }
 </style>
 """
-
-
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
@@ -135,76 +124,31 @@ if "status" not in st.session_state:
     st.session_state.status = "idle"
 if "thanks_expire" not in st.session_state:
     st.session_state.thanks_expire = 0.0
-if "indicator_order" not in st.session_state:
-    st.session_state.indicator_order: List[str] = []
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
 def load_defaults_csv(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de defaults en: {path}. "
-            "Definí la variable de entorno RGI_DEFAULTS_CSV o subí el archivo."
-        )
-
-    ext = os.path.splitext(path)[1].lower()
-
-    # 1) Excel (exportado desde Sheets/Excel)
-    if ext in (".xlsx", ".xls"):
-        df = pd.read_excel(path)
-    else:
-        # 2) CSV: probamos codificaciones típicas y dejamos que infiera el delimitador
-        enc_try = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
-        last_err = None
-        df = None
-        for enc in enc_try:
-            try:
-                df = pd.read_csv(
-                    path,
-                    encoding=enc,
-                    encoding_errors="replace",
-                    sep=None,                   # infiere coma/; /tab
-                    engine="python"             # requerido para sep=None
-                )
-                break
-            except Exception as e:
-                last_err = e
-                continue
-        if df is None:
-            raise RuntimeError(
-                f"No pude leer el archivo CSV con las codificaciones {enc_try}. "
-                f"Último error: {last_err}"
-            )
-
-    # Normalización de columnas esperadas
+    df = pd.read_csv(path, encoding="utf-8-sig")
     cols = [c.strip().lower() for c in df.columns]
-    if not cols:
-        raise ValueError("El archivo de defaults no tiene columnas.")
-
     df.columns = cols
     name_col = "indicator" if "indicator" in cols else cols[0]
-    weight_col = "avg_weight" if "avg_weight" in cols else (cols[1] if len(cols) > 1 else None)
-
-    if weight_col is None:
-        raise ValueError("No se encontró columna de pesos. Esperaba 'indicator' y 'avg_weight'.")
-
+    weight_col = "avg_weight" if "avg_weight" in cols else cols[1]
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
-    out["avg_weight"] = (
-        pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
-    )
+    # CSV ya en [0,1]; limpiamos y acotamos por las dudas
+    out["avg_weight"] = pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     return out
 
-# --- util: redondear a centésimas preservando suma = 1.00 ---
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
+    """Redondea a 0.01 manteniendo suma exacta = 1.00 (en centésimas)."""
     if not weights:
         return {}
     total = float(sum(weights.values()))
     if total <= 0:
         n = max(1, len(weights))
         cents_each = int(round(100 / n))
-        cents = [cents_each] * n
+        cents = [cents_each]*n
         diff = 100 - sum(cents)
         for i in range(abs(diff)):
             idx = i % n
@@ -226,6 +170,16 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
+
+# *** CAMBIO CLAVE: callback sin tope global (permite pasar de 1) ***
+def make_on_change(comp: str):
+    def _cb():
+        new_val = float(st.session_state.get(f"num_{comp}", 0.0))
+        # clamp individual en [0,1] y redondeo a 2 decimales
+        new_val = float(np.round(min(max(new_val, 0.0), 1.0) + 1e-9, 2))
+        st.session_state.weights[comp] = new_val
+        st.session_state[f"num_{comp}"] = new_val
+    return _cb
 
 def payload_hash(email: str, indicators: List[str], weights: Dict[str, float]) -> str:
     tpl = (email.strip().lower(), tuple(indicators), tuple(float(weights[k]) for k in indicators))
@@ -249,6 +203,7 @@ def get_submit_lock() -> Lock:
     return Lock()
 
 def _ensure_header_once(sh, headers: List[str]) -> None:
+    """Escribe encabezado solo si hace falta (tolerante a concurrencia)."""
     try:
         first_row = sh.row_values(1)
         if first_row and first_row[:len(headers)] == headers:
@@ -263,16 +218,19 @@ def _ensure_header_once(sh, headers: List[str]) -> None:
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
+
     _ensure_header_once(sh, headers)
+
     row = (
         [dt.datetime.now().isoformat(), email, session_id]
         + [float(np.round(weights[k], 2)) for k in indicator_order]
         + [float(np.round(sum(weights.values()), 2))]
     )
+
     base_delay = 0.4
     attempts = 5
     for attempt in range(1, attempts + 1):
-        time.sleep(random.uniform(0.0, 0.35))
+        time.sleep(random.uniform(0.0, 0.35))  # jitter
         try:
             sh.append_row(row, value_input_option="RAW")
             return
@@ -286,44 +244,33 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
             time.sleep(sleep_s)
 
 # ───────── LOAD DEFAULTS ─────────
-# ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
-
-    # Orden original del CSV (lo usamos para guardar en Sheets)
-    indicator_order = df["indicator"].tolist()
-    st.session_state.indicator_order = indicator_order
-
-    # Pesos EXACTOS tal cual vienen del CSV → para el ranking fijo
-    defaults_csv = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
-    st.session_state.defaults_csv = dict(defaults_csv)
-
-    # Pesos "editables" (parte interactiva) → redondeados a centésimas y suma = 1.00
-    defaults_cents = round_to_cents_preserve_total(defaults_csv)
-    st.session_state.defaults = dict(defaults_cents)
+    indicators = df["indicator"].tolist()
+    defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
+    defaults_cents = round_to_cents_preserve_total(defaults_raw)
+    st.session_state.defaults = defaults_cents
     st.session_state.weights = dict(defaults_cents)
-
     st.session_state._init_inputs = True
 else:
-    # Fallbacks por si venís de una sesión vieja
-    if "indicator_order" not in st.session_state or not st.session_state.indicator_order:
-        st.session_state.indicator_order = list(st.session_state.weights.keys())
-    if "defaults_csv" not in st.session_state or not st.session_state.defaults_csv:
-        st.session_state.defaults_csv = dict(st.session_state.defaults)
-
-# Alias local para usar en el guardado
-indicators = st.session_state.indicator_order
-
-
+    indicators = list(st.session_state.weights.keys())
 
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
 # Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
+
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# (Se eliminó el botón "Reset to averages" como pediste)
+# Reset
+right_align = st.columns([3,1])[1]
+with right_align:
+    if st.button("Reset to averages", disabled=st.session_state.saving):
+        st.session_state.weights = dict(st.session_state.defaults)
+        for comp in st.session_state.weights:
+            st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
+        st.rerun()
 
 # ───────── AVISO (rojo/verde) SEGÚN SUMA ─────────
 used = float(sum(st.session_state.weights.values()))
@@ -364,123 +311,47 @@ else:
     )
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-#left, mid, right = st.columns([1, 2, 1])
-#with mid:
-    #st.subheader("Allocation")
+st.subheader("Allocation")
 
-# ───────── COMPACT TABLE WITH +/- ─────────
-STEP = 0.01
-def _clamp01(x: float) -> float:
-    return float(np.round(min(max(x, 0.0), 1.0) + 1e-9, 2))
+if st.session_state.get("_init_inputs"):
+    for comp in indicators:
+        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
+    st.session_state._init_inputs = False
 
-def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict[str, float]:
-    w = dict(weights)
-    total_before = sum(w.values())
-    w[target] = _clamp01(w[target] + delta)
-    diff = total_before - sum(w.values())
-    if abs(diff) < 1e-9:
-        return w
-    others = [k for k in w.keys() if k != target]
-    if not others:
-        return w
-    pool = sum(w[k] for k in others)
-    if pool > 1e-12:
-        for k in others:
-            prop = (w[k] / pool) if pool > 0 else (1.0 / len(others))
-            adj = diff * prop
-            newv = _clamp01(w[k] + adj)
-            diff -= (newv - w[k])
-            w[k] = newv
-    if abs(diff) >= (STEP/2):
-        if diff > 0:
-            order = sorted(others, key=lambda k: (1.0 - w[k]), reverse=True)
-            step_sign = +STEP
-            can_move = lambda k: w[k] < 1.0 - 1e-9
-        else:
-            order = sorted(others, key=lambda k: w[k], reverse=True)
-            step_sign = -STEP
-            can_move = lambda k: w[k] > 0.0 + 1e-9
-        safety = 20000; i = 0
-        while abs(diff) >= (STEP/2) and i < safety:
-            moved = False
-            for k in order:
-                if abs(diff) < (STEP/2): break
-                if not can_move(k): continue
-                newv = _clamp01(w[k] + step_sign)
-                if abs(newv - w[k]) >= 1e-12:
-                    w[k] = newv
-                    diff = total_before - sum(w.values())
-                    moved = True
-            if not moved: break
-            i += 1
-    return w
+for comp in indicators:
+    st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
+    st.number_input(
+        label="",
+        key=f"num_{comp}",
+        min_value=0.0,
+        max_value=1.0,
+        step=0.01,
+        format="%.2f",
+        label_visibility="collapsed",
+        on_change=make_on_change(comp),
+        disabled=st.session_state.saving
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-def render_compact_table(weights: Dict[str, float]) -> None:
-    # Encabezados con mismas proporciones que las filas
-    h1, h2, h3 = st.columns([6, 2, 3])
-    with h1:
-        st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
-    with h2:
-        st.markdown("<div class='mini head' style='text-align:left'>Weight</div>", unsafe_allow_html=True)
-
-    # Filas: (podés dejar el orden como tengas; acá lo dejo por peso desc)
+# ───────── LIVE RANKING ─────────
+def render_ranking_html(weights: Dict[str, float]) -> None:
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
-
-    for name, val in ordered:
-        c1, c2, c3 = st.columns([6, 2, 3])
-        with c1:
-            st.markdown(f"<div class='mini row name'>{name}</div>", unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"<div class='mini row wgt'>{float(val):.2f}</div>", unsafe_allow_html=True)
-        with c3:
-            b1, b2 = st.columns(2)
-            dec = b1.button("−", key=f"dec_{name}", disabled=st.session_state.saving)
-            inc = b2.button("＋", key=f"inc_{name}", disabled=st.session_state.saving)
-            if dec or inc:
-                STEP = 0.01
-                delta = (-STEP if dec else STEP)
-                # Sin lock: solo ajusta este indicador (la suma puede moverse)
-                newv = float(np.round(min(max(st.session_state.weights[name] + delta, 0.0), 1.0) + 1e-9, 2))
-                st.session_state.weights[name] = newv
-                st.rerun()
-
-    # --- Fila TOTAL (neutral si ==1.00; roja si != 1.00) ---
-    used_total = float(sum(weights.values()))
-    ok = abs(used_total - 1.0) <= EPS
-    style = '' if ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
-
-    t1, t2, t3 = st.columns([6, 2, 3])
-    with t1:
-        st.markdown(f"<div class='mini row name'{style}><b>Total</b></div>", unsafe_allow_html=True)
-    with t2:
-        st.markdown(f"<div class='mini row wgt'{style}><b>{used_total:.2f}</b></div>", unsafe_allow_html=True)
-    with t3:
-        # celda vacía para mantener la grilla
-        st.markdown(f"<div class='mini row'{style}></div>", unsafe_allow_html=True)
-
-
-render_compact_table(st.session_state.weights)
-
-
-# ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
-# ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
-# ───────── LIVE RANKING (FIJO SEGÚN CSV, ORDENADO DESC) ─────────
-def render_ranking_html_fixed() -> None:
-    base = st.session_state.defaults_csv  # pesos crudos del CSV
-    # Orden: peso descendente y, ante empate, alfabético
-    ordered = sorted(base.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
-
     rows = []
-    for idx, (name, pts) in enumerate(ordered, start=1):
-        rows.append(f"<tr><td>{idx}</td><td>{name}</td><td class='r'>{pts:.2f}</td></tr>")
+    rank = 1
+    for name, pts in ordered:
+        rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
+        rank += 1
 
-    total_csv = float(sum(base.values()))
-    total_row_style = '' if abs(total_csv - 1.0) <= EPS else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
-    rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{total_csv:.2f}</b></td></tr>")
+    # --- Fila TOTAL (roja si != 1.00) ---
+    used_total = float(sum(weights.values()))
+    is_ok = abs(used_total - TOTAL_POINTS) <= EPS
+    total_row_style = "" if is_ok else " style=\"color:#b3261e;background:rgba(217,48,37,.08);\""
+    rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
 
     table_html = f"""
     <div class='rowbox'>
-      <div class='name center'>Ranking (guía según CSV)</div>
+      <div class='name center'>Ranking</div>
       <table class="rank">
         <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
         <tbody>
@@ -492,9 +363,7 @@ def render_ranking_html_fixed() -> None:
     st.markdown(table_html, unsafe_allow_html=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-render_ranking_html_fixed()
-
-
+render_ranking_html(st.session_state.weights)
 
 # ───────── HUD FLOTANTE ─────────
 def render_floating_hud(used: float, rem: float, pct_used: float):
@@ -525,7 +394,7 @@ cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 disabled_submit = (
     (not ok_email)
     or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)
+    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00 exacto
     or st.session_state.saving
     or cooling
 )
@@ -563,7 +432,7 @@ with left:
                         st.session_state.submitted = True
                         st.session_state.status = "saved"
                         st.toast("Submitted. Thank you!", icon="✅")
-                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC
+                        st.session_state.thanks_expire = time.time() + THANKS_VISIBLE_SEC  # ### NEW
                     except Exception as e:
                         st.session_state.status = "error"
                         st.session_state.error_msg = str(e)
@@ -581,13 +450,15 @@ with right:
     pass
 
 # ───────── STATUS ─────────
+# Prioridad: si hay “gracias” vigente, mostrarlo siempre unos segundos
 now_show = time.time()
-if now_show < st.session_state.get("thanks_expire", 0):
+if now_show < st.session_state.get("thanks_expire", 0):  # ### NEW
     status_box.success("✅ Submitted — Thank you!")
 elif st.session_state.get("saving", False):
     status_box.info("⏳ Saving your response… please wait. Do not refresh.")
 else:
     if st.session_state.submitted:
+        # Nada extra; el label del botón ya cambia y el banner puede haber aparecido arriba
         pass
     elif st.session_state.status == "duplicate":
         status_box.info("You’ve already saved this exact configuration.")
