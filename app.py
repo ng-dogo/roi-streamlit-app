@@ -133,6 +133,8 @@ if "status" not in st.session_state:
     st.session_state.status = "idle"
 if "thanks_expire" not in st.session_state:
     st.session_state.thanks_expire = 0.0
+if "indicator_order" not in st.session_state:
+    st.session_state.indicator_order: List[str] = []
 
 # ───────── HELPERS ─────────
 @st.cache_data(ttl=300)
@@ -158,14 +160,11 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
                 df = pd.read_csv(
                     path,
                     encoding=enc,
-                    encoding_errors="replace",  # pandas >=1.5
+                    encoding_errors="replace",
                     sep=None,                   # infiere coma/; /tab
                     engine="python"             # requerido para sep=None
                 )
                 break
-            except UnicodeDecodeError as e:
-                last_err = e
-                continue
             except Exception as e:
                 last_err = e
                 continue
@@ -185,26 +184,18 @@ def load_defaults_csv(path: str) -> pd.DataFrame:
     weight_col = "avg_weight" if "avg_weight" in cols else (cols[1] if len(cols) > 1 else None)
 
     if weight_col is None:
-        raise ValueError(
-            "No se encontró columna de pesos. Esperaba columnas: 'indicator' y 'avg_weight'."
-        )
+        raise ValueError("No se encontró columna de pesos. Esperaba 'indicator' y 'avg_weight'.")
 
     out = df[[name_col, weight_col]].copy()
     out.columns = ["indicator", "avg_weight"]
     out["indicator"] = out["indicator"].astype(str).str.strip()
     out["avg_weight"] = (
-        pd.to_numeric(out["avg_weight"], errors="coerce")
-        .clip(lower=0.0, upper=1.0)
-        .fillna(0.0)
+        pd.to_numeric(out["avg_weight"], errors="coerce").clip(lower=0.0, upper=1.0).fillna(0.0)
     )
     return out
 
 # --- util: redondear a centésimas preservando suma = 1.00 ---
 def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]:
-    """
-    Redondea cada peso a 0.01 y ajusta mínimamente para que la suma total sea 1.00 exacto.
-    Acepta dict {nombre_indicador: peso_en_[0,1]} y devuelve otro dict con las mismas claves.
-    """
     if not weights:
         return {}
     total = float(sum(weights.values()))
@@ -217,12 +208,8 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
             idx = i % n
             cents[idx] += 1 if diff > 0 else -1
         return {k: v/100.0 for k, v in zip(weights.keys(), cents)}
-
-    # escala a centésimas y redondea
     scaled = {k: 100.0 * (v / total) for k, v in weights.items()}
     rounded = {k: int(np.floor(s + 0.5)) for k, s in scaled.items()}
-
-    # corrige residuo para que sume 100 exacto
     resid = {k: (scaled[k] - rounded[k]) for k in weights}
     diff = 100 - sum(rounded.values())
     if diff > 0:
@@ -233,20 +220,10 @@ def round_to_cents_preserve_total(weights: Dict[str, float]) -> Dict[str, float]
         order = sorted(weights.keys(), key=lambda k: resid[k])
         for k in order[:abs(diff)]:
             rounded[k] -= 1
-
     return {k: rounded[k] / 100.0 for k in rounded}
 
 def remaining_points(weights: Dict[str, float]) -> float:
     return float(TOTAL_POINTS - float(sum(weights.values())))
-
-# *** callback para inputs numéricos (no usado en la tabla compacta, lo dejamos por compatibilidad) ***
-def make_on_change(comp: str):
-    def _cb():
-        new_val = float(st.session_state.get(f"num_{comp}", 0.0))
-        new_val = float(np.round(min(max(new_val, 0.0), 1.0) + 1e-9, 2))
-        st.session_state.weights[comp] = new_val
-        st.session_state[f"num_{comp}"] = new_val
-    return _cb
 
 def payload_hash(email: str, indicators: List[str], weights: Dict[str, float]) -> str:
     tpl = (email.strip().lower(), tuple(indicators), tuple(float(weights[k]) for k in indicators))
@@ -270,7 +247,6 @@ def get_submit_lock() -> Lock:
     return Lock()
 
 def _ensure_header_once(sh, headers: List[str]) -> None:
-    """Escribe encabezado solo si hace falta (tolerante a concurrencia)."""
     try:
         first_row = sh.row_values(1)
         if first_row and first_row[:len(headers)] == headers:
@@ -285,19 +261,16 @@ def _ensure_header_once(sh, headers: List[str]) -> None:
 def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indicator_order: List[str]):
     sh = get_worksheet()
     headers = ["timestamp","email","session_id"] + indicator_order + ["total"]
-
     _ensure_header_once(sh, headers)
-
     row = (
         [dt.datetime.now().isoformat(), email, session_id]
         + [float(np.round(weights[k], 2)) for k in indicator_order]
         + [float(np.round(sum(weights.values()), 2))]
     )
-
     base_delay = 0.4
     attempts = 5
     for attempt in range(1, attempts + 1):
-        time.sleep(random.uniform(0.0, 0.35))  # jitter
+        time.sleep(random.uniform(0.0, 0.35))
         try:
             sh.append_row(row, value_input_option="RAW")
             return
@@ -313,31 +286,29 @@ def save_to_sheet(email: str, weights: Dict[str, float], session_id: str, indica
 # ───────── LOAD DEFAULTS ─────────
 if not st.session_state.weights:
     df = load_defaults_csv(CSV_PATH)
-    indicators = df["indicator"].tolist()
+    indicator_order = df["indicator"].tolist()           # ← orden original del CSV
     defaults_raw = {r.indicator: float(r.avg_weight) for r in df.itertuples()}
     defaults_cents = round_to_cents_preserve_total(defaults_raw)
     st.session_state.defaults = defaults_cents
     st.session_state.weights = dict(defaults_cents)
+    st.session_state.indicator_order = indicator_order   # ← guardamos orden CSV
     st.session_state._init_inputs = True
 else:
-    indicators = list(st.session_state.weights.keys())
+    if not st.session_state.indicator_order:
+        # fallback: si ya había pesos, usamos ese orden
+        st.session_state.indicator_order = list(st.session_state.weights.keys())
+
+# Alias local para usar en guardado
+indicators = st.session_state.indicator_order
 
 # ───────── UI ─────────
 st.title("RGI – Budget Allocation Points")
 
 # Email
 st.session_state.email = st.text_input("Email", value=st.session_state.email, placeholder="name@example.org")
-
 st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
 
-# Reset
-right_align = st.columns([3,1])[1]
-with right_align:
-    if st.button("Reset to averages", disabled=st.session_state.saving):
-        st.session_state.weights = dict(st.session_state.defaults)
-        for comp in st.session_state.weights:
-            st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
-        st.rerun()
+# (Se eliminó el botón "Reset to averages" como pediste)
 
 # ───────── AVISO (rojo/verde) SEGÚN SUMA ─────────
 used = float(sum(st.session_state.weights.values()))
@@ -382,31 +353,20 @@ st.subheader("Allocation (compact)")
 
 # ───────── COMPACT TABLE WITH +/- ─────────
 STEP = 0.01
-
 def _clamp01(x: float) -> float:
     return float(np.round(min(max(x, 0.0), 1.0) + 1e-9, 2))
 
 def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict[str, float]:
-    """
-    Ajusta otras filas para compensar delta en 'target' y mantener suma = 1.00.
-    1) Proporcional a sus pesos respetando límites [0,1].
-    2) Pase greedy a centésimas si queda residuo por redondeos/saturaciones.
-    """
     w = dict(weights)
     total_before = sum(w.values())
     w[target] = _clamp01(w[target] + delta)
-
-    diff = total_before - sum(w.values())  # >0: hay que sumar a otros; <0: quitar a otros
+    diff = total_before - sum(w.values())
     if abs(diff) < 1e-9:
         return w
-
     others = [k for k in w.keys() if k != target]
     if not others:
         return w
-
     pool = sum(w[k] for k in others)
-
-    # Pase proporcional
     if pool > 1e-12:
         for k in others:
             prop = (w[k] / pool) if pool > 0 else (1.0 / len(others))
@@ -414,20 +374,16 @@ def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict
             newv = _clamp01(w[k] + adj)
             diff -= (newv - w[k])
             w[k] = newv
-
-    # Pase greedy si quedó residuo apreciable
     if abs(diff) >= (STEP/2):
         if diff > 0:
-            order = sorted(others, key=lambda k: (1.0 - w[k]), reverse=True)  # más espacio hacia arriba
+            order = sorted(others, key=lambda k: (1.0 - w[k]), reverse=True)
             step_sign = +STEP
             can_move = lambda k: w[k] < 1.0 - 1e-9
         else:
-            order = sorted(others, key=lambda k: w[k], reverse=True)         # más grandes primero
+            order = sorted(others, key=lambda k: w[k], reverse=True)
             step_sign = -STEP
             can_move = lambda k: w[k] > 0.0 + 1e-9
-
-        safety = 20000
-        i = 0
+        safety = 20000; i = 0
         while abs(diff) >= (STEP/2) and i < safety:
             moved = False
             for k in order:
@@ -436,22 +392,19 @@ def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict
                 newv = _clamp01(w[k] + step_sign)
                 if abs(newv - w[k]) >= 1e-12:
                     w[k] = newv
-                    # recalcular residuo exacto para evitar drift
                     diff = total_before - sum(w.values())
                     moved = True
-            if not moved:
-                break
+            if not moved: break
             i += 1
-
     return w
 
 def render_compact_table(weights: Dict[str, float], lock_total: bool) -> None:
-    # encabezados
     h1, h2, h3 = st.columns([6,2,3])
     with h1: st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
     with h2: st.markdown("<div class='mini head' style='text-align:right'>Weight</div>", unsafe_allow_html=True)
     with h3: st.markdown("<div class='mini head' style='text-align:right'>Adjust</div>", unsafe_allow_html=True)
 
+    # La tabla compacta puede seguir ordenándose por peso si querés; lo dejo igual
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
 
     for name, val in ordered:
@@ -472,31 +425,28 @@ def render_compact_table(weights: Dict[str, float], lock_total: bool) -> None:
                     st.session_state.weights[name] = _clamp01(st.session_state.weights[name] + delta)
                 st.rerun()
 
-# Toggle para mantener suma exacta
 lock_total = st.toggle("Lock total at 1.00", value=False,
                        help="Ajusta automáticamente el resto para que la suma se mantenga en 1.00")
-
-# Render tabla compacta
 render_compact_table(st.session_state.weights, lock_total)
 
-# ───────── LIVE RANKING ─────────
+# ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
-    ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
+    # Usamos el orden del CSV guardado en session_state.indicator_order
     rows = []
     rank = 1
-    for name, pts in ordered:
+    for name in st.session_state.indicator_order:
+        pts = weights.get(name, 0.0)
         rows.append(f"<tr><td>{rank}</td><td>{name}</td><td class='r'>{float(pts):.2f}</td></tr>")
         rank += 1
 
     used_total = float(sum(weights.values()))
     is_ok = abs(used_total - TOTAL_POINTS) <= EPS
-    # ✅ usar comillas simples afuera y dobles adentro (sin escapes)
     total_row_style = '' if is_ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
     rows.append(f"<tr{total_row_style}><td>—</td><td><b>Total</b></td><td class='r'><b>{used_total:.2f}</b></td></tr>")
 
     table_html = f"""
     <div class='rowbox'>
-      <div class='name center'>Ranking</div>
+      <div class='name center'>Ranking (guía según CSV)</div>
       <table class="rank">
         <thead><tr><th>#</th><th>Indicator</th><th>Weight</th></tr></thead>
         <tbody>
@@ -506,7 +456,6 @@ def render_ranking_html(weights: Dict[str, float]) -> None:
     </div>
     """
     st.markdown(table_html, unsafe_allow_html=True)
-
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 render_ranking_html(st.session_state.weights)
@@ -540,7 +489,7 @@ cooling = (now - st.session_state.last_submit_ts) < SUBMISSION_COOLDOWN_SEC
 disabled_submit = (
     (not ok_email)
     or st.session_state.submitted
-    or (abs(remaining_points(st.session_state.weights)) > EPS)  # debe sumar 1.00 exacto
+    or (abs(remaining_points(st.session_state.weights)) > EPS)
     or st.session_state.saving
     or cooling
 )
