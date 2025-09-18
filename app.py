@@ -98,6 +98,14 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
 .mini .stButton>button{ padding:.15rem .4rem; border-radius:8px; min-height:auto }
 </style>
 """
+
+st.markdown("""
+<style>
+/* Asegura centrado del encabezado y altura compacta de los botones */
+.mini .stButton > button { min-height: 32px; }
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
@@ -411,17 +419,22 @@ def _adjust_others(weights: Dict[str, float], target: str, delta: float) -> Dict
             i += 1
     return w
 
-def render_compact_table(weights: Dict[str, float], lock_total: bool) -> None:
-    h1, h2, h3 = st.columns([6,2,3])
-    with h1: st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
-    with h2: st.markdown("<div class='mini head' style='text-align:right'>Weight</div>", unsafe_allow_html=True)
-    with h3: st.markdown("<div class='mini head' style='text-align:right'>Adjust</div>", unsafe_allow_html=True)
+def render_compact_table(weights: Dict[str, float]) -> None:
+    # Encabezados con mismas proporciones que las filas
+    h1, h2, h3 = st.columns([6, 2, 3])
+    with h1:
+        st.markdown("<div class='mini head'>Indicator</div>", unsafe_allow_html=True)
+    with h2:
+        st.markdown("<div class='mini head' style='text-align:right'>Weight</div>", unsafe_allow_html=True)
+    with h3:
+        # Centrado para que quede sobre los dos botones
+        st.markdown("<div class='mini head' style='text-align:center'>Adjust</div>", unsafe_allow_html=True)
 
-    # La tabla compacta puede seguir ordenándose por peso si querés; lo dejo igual
+    # Filas: (podés dejar el orden como tengas; acá lo dejo por peso desc)
     ordered = sorted(weights.items(), key=lambda kv: (-float(kv[1]), kv[0].lower()))
 
     for name, val in ordered:
-        c1, c2, c3 = st.columns([6,2,3])
+        c1, c2, c3 = st.columns([6, 2, 3])
         with c1:
             st.markdown(f"<div class='mini row name'>{name}</div>", unsafe_allow_html=True)
         with c2:
@@ -431,16 +444,30 @@ def render_compact_table(weights: Dict[str, float], lock_total: bool) -> None:
             dec = b1.button("−", key=f"dec_{name}", disabled=st.session_state.saving)
             inc = b2.button("＋", key=f"inc_{name}", disabled=st.session_state.saving)
             if dec or inc:
+                STEP = 0.01
                 delta = (-STEP if dec else STEP)
-                if lock_total:
-                    st.session_state.weights = _adjust_others(st.session_state.weights, name, delta)
-                else:
-                    st.session_state.weights[name] = _clamp01(st.session_state.weights[name] + delta)
+                # Sin lock: solo ajusta este indicador (la suma puede moverse)
+                newv = float(np.round(min(max(st.session_state.weights[name] + delta, 0.0), 1.0) + 1e-9, 2))
+                st.session_state.weights[name] = newv
                 st.rerun()
 
-lock_total = st.toggle("Lock total at 1.00", value=False,
-                       help="Ajusta automáticamente el resto para que la suma se mantenga en 1.00")
-render_compact_table(st.session_state.weights, lock_total)
+    # --- Fila TOTAL (neutral si ==1.00; roja si != 1.00) ---
+    used_total = float(sum(weights.values()))
+    ok = abs(used_total - 1.0) <= EPS
+    style = '' if ok else ' style="color:#b3261e;background:rgba(217,48,37,.08);"'
+
+    t1, t2, t3 = st.columns([6, 2, 3])
+    with t1:
+        st.markdown(f"<div class='mini row name'{style}><b>Total</b></div>", unsafe_allow_html=True)
+    with t2:
+        st.markdown(f"<div class='mini row wgt'{style}><b>{used_total:.2f}</b></div>", unsafe_allow_html=True)
+    with t3:
+        # celda vacía para mantener la grilla
+        st.markdown(f"<div class='mini row'{style}></div>", unsafe_allow_html=True)
+
+
+render_compact_table(st.session_state.weights)
+
 
 # ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
 # ───────── LIVE RANKING (FIJO SEGÚN CSV) ─────────
