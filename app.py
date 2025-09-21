@@ -81,30 +81,43 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   width: 0%;
 }
 
-/* Contenedor más angosto en desktop, pero full en mobile */
-.main .block-container{max-width:860px}
-@media (max-width: 680px){
-  .main .block-container{max-width:none; padding-left:.6rem; padding-right:.6rem}
-  .rowbox{padding:.35rem .45rem; border-radius:10px}
-  .name{margin:.2rem 0 .2rem}
-  .kpis{gap:.5rem}
-  .hud{left:8px; right:8px; width:auto; bottom:8px}
-  .hud-bar{width:58%}
-  /* Botones más compactos, pero tocables */
-  .stButton>button{padding:.28rem .6rem; font-size:.9rem; border-radius:10px}
-  /* inputs numéricos angostos y centrados */
-  .stNumberInput input{padding:.25rem .35rem; text-align:center; font-weight:600}
+/* --- Compacto estilo Excel + sin spinners --- */
+.row { 
+  display:grid; 
+  grid-template-columns: 1fr 34px 70px 34px; 
+  align-items:center; 
+  gap:.25rem; 
+  border-bottom:1px solid var(--border);
+  padding:.2rem .1rem;
+}
+.row .label{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.row .cell{display:flex; align-items:center; justify-content:center}
+
+/* Quitar márgenes verticales de los widgets en la fila */
+.row [data-testid="column"]{padding:0 !important}
+.row .stButton, .row .stNumberInput, .row .stMarkdown{margin:0 !important}
+
+/* Botoncitos ± minimales */
+.row .stButton>button{padding:.2rem .4rem; border-radius:8px}
+
+/* Input centrado y sin flechitas (spinners) */
+.row .stNumberInput input{
+  padding:.2rem .35rem; 
+  text-align:center; 
+  font-weight:600;
+}
+/* WebKit */
+.row input[type=number]::-webkit-outer-spin-button,
+.row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* Firefox */
+.row input[type=number] { -moz-appearance:textfield; }
+
+/* Móvil: aún más compacto y sin saltos de línea */
+@media (max-width: 480px){
+  .row{ grid-template-columns: 1fr 32px 64px 32px; gap:.2rem; }
+  .main .block-container{padding-left:.6rem; padding-right:.6rem}
 }
 
-/* Fila de asignación compacta tipo "list item" */
-.row{
-  display:flex; align-items:center; gap:.5rem;
-  padding:.25rem .35rem; border-bottom:1px solid var(--border);
-}
-.row .label{flex:1; font-weight:600}
-.row .cell{display:flex; align-items:center; gap:.35rem}
-.btn-mini{padding:.2rem .5rem; line-height:1; border-radius:8px; border:1px solid var(--border); background:#fff}
-.btn-mini:active{filter:brightness(0.95)}
 
 
 
@@ -334,7 +347,10 @@ else:
     )
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-# === Lista compacta por filas: Label | [-] [número] [+] ===
+# === Lista compacta estilo Excel: [Nombre] [−] [valor] [+] ===
+
+# paso de ajuste (0.01 = 1 punto porcentual)
+STEP = 0.01
 
 def bump(comp, delta):
     v = float(st.session_state.weights.get(comp, 0.0))
@@ -343,36 +359,32 @@ def bump(comp, delta):
     st.session_state.weights[comp] = v
     st.session_state[f"num_{comp}"] = v
 
-# Render por indicador (sin tablas, ideal móvil)
 for comp in indicators:
-    # valor actual
-    curr = float(st.session_state.weights.get(comp, 0.0))
-    c1, c2, c3 = st.columns([5, 4, 3])  # label | controles | input
-    with c1:
+    # construyo una “fila” de 4 columnas: label | − | input | +
+    col_label, col_minus, col_num, col_plus = st.columns([6,1.2,2.2,1.2])
+
+    with col_label:
         st.markdown(f"<div class='row'><div class='label'>{comp}</div></div>", unsafe_allow_html=True)
-    with c2:
-        c21, c22, c23 = st.columns([1, 2, 1])
-        with c21:
-            st.button("−", key=f"m_{comp}", on_click=bump, args=(comp, -0.01), help="-0.01", type="secondary")
-        with c22:
-            # Input centrado y sincronizado
-            num = st.number_input(
-                label="",
-                key=f"num_{comp}",
-                value=curr,
-                step=0.01,
-                min_value=0.0, max_value=1.0, format="%.2f",
-                label_visibility="collapsed"
-            )
-            # Clamp & sync (por si tipean)
-            num = float(np.round(min(max(float(num), 0.0), 1.0) + 1e-9, 2))
-            if num != st.session_state.weights[comp]:
-                st.session_state.weights[comp] = num
-        with c23:
-            st.button("+", key=f"p_{comp}", on_click=bump, args=(comp, +0.01), help="+0.01")
-    with c3:
-        # Muestra del porcentaje como badge pequeño (opcional)
-        st.markdown(f"<div class='small-note'>{st.session_state.weights[comp]:.2f}</div>", unsafe_allow_html=True)
+
+    # los tres widgets viven “dentro” de la misma fila visual
+    # para evitar saltos, renderizo en el mismo orden y sincronizo estado
+    with col_minus:
+        st.button("−", key=f"m_{comp}", on_click=bump, args=(comp, -STEP), help=f"-{STEP:.2f}")
+
+    with col_num:
+        val = float(st.session_state.weights.get(comp, 0.0))
+        num = st.number_input(
+            label="", key=f"num_{comp}", value=val,
+            step=STEP, min_value=0.0, max_value=1.0, format="%.2f",
+            label_visibility="collapsed",
+        )
+        # clamp + sync por si tipean
+        num = float(np.round(min(max(float(num), 0.0), 1.0) + 1e-9, 2))
+        if num != st.session_state.weights[comp]:
+            st.session_state.weights[comp] = num
+
+    with col_plus:
+        st.button("+", key=f"p_{comp}", on_click=bump, args=(comp, +STEP), help=f"+{STEP:.2f}")
 
 
 
