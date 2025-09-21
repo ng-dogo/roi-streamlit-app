@@ -80,7 +80,13 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   background: var(--brand);
   width: 0%;
 }
-
+@media (hover:hover){ .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) } }
+@media (max-width: 480px){ .hud { bottom: 8px; padding: .45rem .6rem } }
+@media (prefers-color-scheme: dark){
+  .hud{ background: rgba(18,18,18,.85); border-color: rgba(255,255,255,.12); }
+  .hud-mono{ color: rgba(255,255,255,.92); }
+  .hud-bar{ background: rgba(255,255,255,.15); }
+}
 
 
 /* Compactar number_input y que no empuje la fila hacia abajo */
