@@ -196,7 +196,7 @@ sendBtn.addEventListener('click', async ()=>{
     sendBtn.textContent = "Sending…";
     const res = await fetch(WEBAPP_URL, {
       method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" }, // simple => sin preflight
+      headers: { "Content-Type": "text/plain"}, // simple => sin preflight
       body: JSON.stringify(payload)
     });
     const txt = await res.text();
