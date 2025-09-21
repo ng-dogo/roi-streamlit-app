@@ -326,48 +326,51 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
-# === Tabla compacta editable: Indicador | Peso ===
+# === Tabla compacta editable con columna de ajustes ± ===
 st.markdown("<div class='data-editor-compact'>", unsafe_allow_html=True)
 
-df_weights = pd.DataFrame({
+df_base = pd.DataFrame({
     "Indicator": indicators,
     "Weight": [float(st.session_state.weights[i]) for i in indicators],
+    "−": [""] * len(indicators),
+    "+": [""] * len(indicators),
 })
 
+# callback para los botones por fila (Streamlit pasa 'row' con el índice de la fila)
+def _bump_row(row: int, delta: float):
+    ind = df_base.loc[row, "Indicator"]
+    v = float(st.session_state.weights[ind])
+    v = float(np.round(min(max(v + delta, 0.0), 1.0) + 1e-9, 2))
+    st.session_state.weights[ind] = v
+    st.session_state[f"num_{ind}"] = v
+    st.rerun()
+
 edited = st.data_editor(
-    df_weights,
+    df_base,
     hide_index=True,
     use_container_width=True,
+    key="weights_editor",
     column_config={
         "Indicator": st.column_config.TextColumn("Indicator", disabled=True),
         "Weight": st.column_config.NumberColumn(
-            "Weight",
-            min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
+            "Weight", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
             help="Debe quedar en [0,1] y sumar 1.00"
         ),
+        "−": st.column_config.ButtonColumn("−", width="small",
+                                           help="−0.01", on_click=_bump_row, args=[-0.01]),
+        "+": st.column_config.ButtonColumn("+", width="small",
+                                           help="+0.01", on_click=_bump_row, args=[+0.01]),
     },
 )
 
-# Sincroniza cambios a session_state (redondeo y clamp)
-changed = False
+# Sincronizar ediciones manuales de la columna Weight
 for ind, val in zip(edited["Indicator"], edited["Weight"]):
     v = float(np.round(min(max(val, 0.0), 1.0) + 1e-9, 2))
     if st.session_state.weights.get(ind) != v:
         st.session_state.weights[ind] = v
         st.session_state[f"num_{ind}"] = v
-        changed = True
-
-# (Opcional) si querés que siempre queden en centésimas conservando suma:
-# st.session_state.weights = round_to_cents_preserve_total(st.session_state.weights)
-
-if changed:
-    st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
-
-
-
-
 
 
 # ───────── LIVE RANKING ─────────
