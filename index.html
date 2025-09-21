@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RGI – Budget Allocation Points</title>
+<meta name="color-scheme" content="light dark">
+<style>
+  :root{
+    --brand:#0E7C66; --muted:#6b7280; --border:#e5e7eb;
+    --bad:#b3261e; --badbg:#fff1f0; --good:#0E7C66; --goodbg:#f0fdf4;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;margin:0;padding:12px;line-height:1.25}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:1.15rem;margin:.2rem 0 .6rem}
+  .caption{color:var(--muted);font-size:.95rem;margin-bottom:.6rem}
+
+  /* Inputs */
+  .field{margin:.35rem 0 .6rem}
+  .label{font-weight:600;margin-bottom:.25rem}
+  input[type=email]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:1rem}
+
+  /* Tabla estilo Excel super compacta */
+  table{width:100%;border-collapse:collapse;font-size:1rem}
+  th,td{border-bottom:1px solid var(--border);padding:6px}
+  th{color:var(--muted);font-weight:600}
+  td.n{width:90px;text-align:center}
+  td.c{width:42px;text-align:center}
+
+  button.btn{padding:6px 10px;border:1px solid var(--border);background:#fff;border-radius:10px;cursor:pointer}
+  button.btn:active{filter:brightness(0.95)}
+  button.primary{background:var(--brand);color:#fff;border:none}
+  button.primary:disabled{background:#0b6b59;color:#fff;opacity:1;cursor:not-allowed}
+
+  input[type=number]{
+    width:78px;text-align:center;padding:6px;border:1px solid var(--border);border-radius:10px;font-weight:600;
+    -moz-appearance:textfield;
+  }
+  /* Sin spinners */
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+
+  .sum{margin:.6rem 0;padding:10px;border:1px solid var(--good);background:var(--goodbg);border-radius:12px}
+  .sum.bad{border-color:#fecaca;background:var(--badbg);color:var(--bad)}
+  .help{color:var(--muted);font-size:.9rem;margin-top:.15rem}
+
+  /* Barra de progreso total */
+  .bar{height:8px;background:#eef2f7;border-radius:999px;overflow:hidden}
+  .fill{height:8px;background:var(--brand);width:0%}
+
+  /* Mobile tweaks */
+  @media (max-width:480px){
+    body{padding:10px}
+    td.n{width:78px}
+    td.c{width:38px}
+    input[type=number]{width:70px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RGI – Budget Allocation Points</h1>
+  <div class="caption">Assign weights to each indicator so the total is exactly <b>1.00</b>. Use the ± buttons or type values.</div>
+
+  <!-- Email -->
+  <div class="field">
+    <div class="label">Email</div>
+    <input id="email" type="email" placeholder="name@example.org" autocomplete="email" required>
+  </div>
+
+  <!-- Controles -->
+  <div class="field" style="display:flex;gap:.5rem;align-items:center">
+    <button id="reset" class="btn">Reset to averages</button>
+    <label class="help"><input id="fast" type="checkbox" style="vertical-align:-2px"> Fast step (+/− 0.05)</label>
+  </div>
+
+  <!-- Tabla -->
+  <table id="tbl">
+    <thead>
+      <tr><th>Indicator</th><th class="c"></th><th class="n">Weight</th><th class="c"></th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <!-- Suma + barra -->
+  <div id="sum" class="sum" style="display:none"></div>
+  <div class="bar" aria-hidden="true"><div id="fill" class="fill"></div></div>
+  <div class="help" id="hint"></div>
+
+  <!-- Submit -->
+  <div class="field" style="margin-top:.8rem">
+    <button id="send" class="btn primary" disabled>Submit</button>
+  </div>
+</div>
+
+<script>
+/* =======================
+   CONFIG
+======================= */
+// Backend (Apps Script web app)
+const WEBAPP_URL   = "https://script.google.com/macros/s/AKfycbxFk1ZSQ5qhYlHlW6yaQwsc8BaoMQopcygGEnUOxZQc-WAcVjaoJqqkH19uiy_Lstx9ew/exec";
+const SHARED_TOKEN = "TU_TOKEN_LARGO_AQUI"; // igual al del Apps Script
+
+// CSV en el mismo hosting (raíz del repo):
+// columnas: indicator,weight
+const CSV_URL = "rgi_bap_defaults.csv";
+
+/* =======================
+   Estado y helpers
+======================= */
+const emailEl = document.getElementById('email');
+const tblBody = document.getElementById('tbody');
+const sumBox  = document.getElementById('sum');
+const fillBar = document.getElementById('fill');
+const hintEl  = document.getElementById('hint');
+const sendBtn = document.getElementById('send');
+const resetBtn= document.getElementById('reset');
+const fastCk  = document.getElementById('fast');
+
+let labels = [];         // se cargan desde CSV
+let vals   = [];         // se cargan desde CSV
+let defaultsVals = [];   // copia para reset
+let STEP   = 0.01;
+
+fastCk.addEventListener('change', ()=>{ STEP = fastCk.checked ? 0.05 : 0.01; });
+
+function clamp2(x){ return Math.min(1, Math.max(0, +(x).toFixed(2))); }
+function sumVals(){ return +(vals.reduce((a,b)=>a+b,0)).toFixed(2); }
+function emailValid(s){ return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim()); }
+
+/* =======================
+   Render
+======================= */
+function drawTable(){
+  tblBody.innerHTML = labels.map((name,i)=>`
+    <tr>
+      <td>${name}</td>
+      <td class="c"><button class="btn" aria-label="decrease" onclick="b(${i},-${STEP})">−</button></td>
+      <td class="n">
+        <input type="number" step="${STEP}" min="0" max="1" value="${vals[i].toFixed(2)}"
+               onchange="setVal(${i}, this.value)">
+      </td>
+      <td class="c"><button class="btn" aria-label="increase" onclick="b(${i},${STEP})">+</button></td>
+    </tr>
+  `).join('');
+  updateSum();
+}
+
+window.b = (i, d) => {
+  vals[i] = clamp2(vals[i] + d);
+  drawTable();
+};
+
+window.setVal = (i, v) => {
+  vals[i] = clamp2(+v);
+  updateSum(true);
+};
+
+function updateSum(skipFill){
+  const s = sumVals();
+  const ok = (s === 1.00);
+  sumBox.style.display = 'block';
+  sumBox.className = 'sum' + (ok ? '' : ' bad');
+  sumBox.textContent = ok ? '✅ Total 1.00 — You can submit.' :
+    `⚠️ Total ${s.toFixed(2)} — ${s<1 ? 'Add ' + (1-s).toFixed(2) : 'Remove ' + (s-1).toFixed(2)}`;
+
+  if (!skipFill){
+    fillBar.style.width = Math.min(100, Math.max(0, s*100)) + '%';
+  }
+
+  const canSend = ok && emailValid(emailEl.value);
+  sendBtn.disabled = !canSend;
+  hintEl.textContent = "Step: " + STEP.toFixed(2) + " • " + (canSend ? "Ready to submit" : "Enter a valid email and make total 1.00");
+}
+
+/* =======================
+   Reset
+======================= */
+resetBtn.addEventListener('click', ()=>{
+  vals = [...defaultsVals].map(x=>+x.toFixed(2));
+  drawTable();
+});
+
+/* =======================
+   Envío
+======================= */
+sendBtn.addEventListener('click', async ()=>{
+  const payload = {
+    email: emailEl.value.trim(),
+    weights: Object.fromEntries(labels.map((k,i)=>[k, +vals[i].toFixed(2)]))
+  };
+  try{
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sending…";
+    const res = await fetch(WEBAPP_URL, {
+      method:"POST",
+      headers: {"Content-Type":"application/json","X-Auth":SHARED_TOKEN},
+      body: JSON.stringify(payload)
+    });
+    const txt = await res.text();
+    if(!res.ok) throw new Error(txt||("HTTP "+res.status));
+    sendBtn.textContent = "✅ Submitted — Thank you!";
+  }catch(err){
+    alert("Error submitting: " + (err.message||err));
+    sendBtn.textContent = "Submit";
+    updateSum();
+  }
+});
+
+/* =======================
+   CSV loader (indicator,weight)
+======================= */
+async function tryLoadCSV(){
+  try{
+    const r = await fetch(CSV_URL, {cache:"no-store"});
+    if(!r.ok) throw new Error("CSV not found");
+    const t = await r.text();
+
+    // Parse muy simple: separa por líneas y comas
+    const rows = t.split(/\r?\n/).map(x=>x.trim()).filter(x=>x);
+    const head = rows.shift().toLowerCase().split(',').map(s=>s.trim());
+    const iIdx = head.indexOf('indicator');
+    // soporta 'weight' o 'avg_weight'
+    let wIdx = head.indexOf('weight');
+    if (wIdx === -1) wIdx = head.indexOf('avg_weight');
+    if(iIdx===-1 || wIdx===-1) throw new Error("CSV must have headers: indicator,weight");
+
+    const L=[], V=[];
+    rows.forEach(line=>{
+      // ojo con comas dentro de nombres: usamos split simple porque tus nombres no tienen comas
+      const parts = line.split(',');
+      const name = (parts[iIdx]||'').trim();
+      const w = parseFloat((parts[wIdx]||'0').replace(',', '.'));
+      if(name){
+        L.push(name);
+        V.push(isFinite(w) ? clamp2(w) : 0);
+      }
+    });
+
+    if(L.length){
+      labels = L;
+      vals = V;
+      defaultsVals = [...V];
+      // Si no suma 1.00, normalizamos manteniendo 2 decimales
+      const s = vals.reduce((a,b)=>a+b,0);
+      if (Math.abs(s-1) > 1e-6 && s > 0){
+        vals = vals.map(x=>+(x/s).toFixed(2));
+        defaultsVals = [...vals];
+      }
+      drawTable();
+    } else {
+      throw new Error("CSV empty");
+    }
+  }catch(e){
+    console.warn("CSV load failed:", e);
+    // Fallback: valores por si el CSV falla
+    labels = [
+      "Legal mandate","Clarity of roles and objectives","Independence",
+      "Accountability","Transparency of decisions","Predictability",
+      "Participation","Access to information"
+    ];
+    vals = [0.14,0.12,0.11,0.10,0.09,0.13,0.15,0.16];
+    defaultsVals = [...vals];
+    drawTable();
+  }
+}
+
+// Inicialización
+emailEl.addEventListener('input', ()=>updateSum(true));
+tryLoadCSV();
+</script>
+</body>
+</html>
