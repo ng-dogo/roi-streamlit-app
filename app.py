@@ -80,33 +80,42 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   background: var(--brand);
   width: 0%;
 }
-@media (hover:hover){ .hud:hover{ box-shadow: 0 8px 26px rgba(0,0,0,.12) } }
-@media (max-width: 480px){ .hud { bottom: 8px; padding: .45rem .6rem } }
-@media (prefers-color-scheme: dark){
-  .hud{ background: rgba(18,18,18,.85); border-color: rgba(255,255,255,.12); }
-  .hud-mono{ color: rgba(255,255,255,.92); }
-  .hud-bar{ background: rgba(255,255,255,.15); }
-}
 
 
-/* Compactar number_input y que no empuje la fila hacia abajo */
-div[data-testid="stNumberInput"] { 
-  margin: .1rem 0 !important; 
-  max-width: 140px;              /* ancho del box */
+/* ===== Mantener label | input en una sola fila en móvil ===== */
+.alloc-wrap [data-testid="stHorizontalBlock"]{
+  display:flex;
+  flex-wrap: nowrap !important;   /* evita que las columnas se apilen */
+  align-items: center;
+  gap: .5rem;
 }
-div[data-testid="stNumberInput"] input{
+.alloc-wrap [data-testid="column"]:first-child{
+  flex: 1 1 auto;                 /* el label ocupa el resto */
+  min-width: 0;
+}
+.alloc-wrap [data-testid="column"]:last-child{
+  flex: 0 0 130px;                /* ancho del box de peso (ajustable) */
+  max-width: 130px;
+}
+
+.alloc-wrap [data-testid="stNumberInput"]{
+  margin: .1rem 0 !important;
+}
+.alloc-wrap [data-testid="stNumberInput"] input{
   text-align: center;
   font-weight: 600;
   height: 36px;
   padding: .2rem .4rem;
 }
 
-/* Móvil: mantener todo en una fila */
+/* Afinado específico para pantallas chicas */
 @media (max-width: 480px){
+  .alloc-wrap [data-testid="column"]:last-child{
+    flex-basis: 110px;            /* más angosto en móvil */
+    max-width: 110px;
+  }
   .name{ margin:.1rem 0 .05rem; font-size:.95rem; }
-  div[data-testid="stNumberInput"] { max-width: 110px; }
 }
-
 
 
 
@@ -344,27 +353,28 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
-# ---- Allocation (una sola fila por indicador: Label | [0.12 ±]) ----
-STEP = 0.01
+# --- Allocation (label | input en la MISMA fila también en móvil) ---
+st.markdown("<div class='alloc-wrap'>", unsafe_allow_html=True)
 
 for comp in indicators:
-    col_label, col_input = st.columns([0.64, 0.36])  # ajustá proporciones si querés
-
+    col_label, col_input = st.columns([1, 0.42])  # proporción base; la CSS manda en mobile
     with col_label:
         st.markdown(f"<div class='name' style='margin:.1rem 0'>{comp}</div>", unsafe_allow_html=True)
-
     with col_input:
         st.number_input(
             label="",
             key=f"num_{comp}",
             min_value=0.0,
             max_value=1.0,
-            step=STEP,
+            step=0.01,
             format="%.2f",
             label_visibility="collapsed",
             on_change=make_on_change(comp),
             disabled=st.session_state.saving
         )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
