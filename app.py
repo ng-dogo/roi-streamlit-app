@@ -87,8 +87,26 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   .hud-mono{ color: rgba(255,255,255,.92); }
   .hud-bar{ background: rgba(255,255,255,.15); }
 }
+
+/* — Compacto en pantallas chicas — */
+@media (max-width: 480px){
+  .name{ margin:.15rem 0 .1rem; font-size: .95rem; }
+  .rowbox{ padding:.25rem .4rem; } /* o podés directamente no usar rowbox */
+  /* Inputs y botones más chicos */
+  input[type=number]{ height: 36px; padding:.25rem .45rem; font-size:.95rem; }
+  .stButton>button{
+    padding:.28rem .56rem;
+    border-radius:10px;
+    min-height:0; line-height:1.1;
+  }
+  /* Tabla ranking levemente más compacta también */
+  .rank th, .rank td{ padding:.28rem .4rem; }
+}
+
 </style>
 """
+
+
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────── CONSTANTS ─────────
@@ -318,21 +336,48 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
+# --- reemplaza el bucle de render actual por este ---
+STEP = 0.01  # cuánto suman/restan los botones
+
 for comp in indicators:
-    st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='rowbox center'>", unsafe_allow_html=True)
-    st.number_input(
-        label="",
-        key=f"num_{comp}",
-        min_value=0.0,
-        max_value=1.0,
-        step=0.01,
-        format="%.2f",
-        label_visibility="collapsed",
-        on_change=make_on_change(comp),
-        disabled=st.session_state.saving
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+    # 4 columnas: Indicador | Peso | − | +
+    c1, c2, c3, c4 = st.columns([0.62, 0.20, 0.09, 0.09])  # ajustá proporciones si querés
+
+    with c1:
+        st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
+
+    with c2:
+        st.number_input(
+            label="",
+            key=f"num_{comp}",
+            min_value=0.0,
+            max_value=1.0,
+            step=STEP,
+            format="%.2f",
+            label_visibility="collapsed",
+            on_change=make_on_change(comp),
+            disabled=st.session_state.saving
+        )
+
+    with c3:
+        if st.button("−", key=f"dec_{comp}", disabled=st.session_state.saving):
+            v = float(st.session_state.get(f"num_{comp}", 0.0))
+            v = max(0.0, round(v - STEP + 1e-9, 2))
+            st.session_state[f"num_{comp}"] = v
+            st.session_state.weights[comp] = v
+            st.rerun()
+
+    with c4:
+        if st.button("+", key=f"inc_{comp}", disabled=st.session_state.saving):
+            v = float(st.session_state.get(f"num_{comp}", 0.0))
+            v = min(1.0, round(v + STEP + 1e-9, 2))
+            st.session_state[f"num_{comp}"] = v
+            st.session_state.weights[comp] = v
+            st.rerun()
+
+    # separador sutil entre filas (opcional)
+    st.markdown("<div class='soft-divider'></div>", unsafe_allow_html=True)
+
 
 # ───────── LIVE RANKING ─────────
 def render_ranking_html(weights: Dict[str, float]) -> None:
