@@ -99,7 +99,7 @@
    CONFIG
 ======================= */
 // Backend (Apps Script web app)
-const WEBAPP_URL   = "https://script.google.com/macros/s/AKfycbwLRC7-tbJ-Pfk8fxjnmoUp4i94iVX3MgOr5r768u0v7kcI0infHwVuyLOqKL4TOxsjEA/exec";
+const WEBAPP_URL   = "https://script.google.com/macros/s/AKfycbxH9Ip4uJIdLez9Gs1N6_vvXewr_All6eLV6nn0A1P1Mu1e_GJ58cWfLkpKLLPe41Xemw/exec";
 const SHARED_TOKEN = "TU_TOKEN_LARGO_AQUI"; // igual al del Apps Script
 
 // CSV en el mismo hosting (raíz del repo):
@@ -185,29 +185,37 @@ resetBtn.addEventListener('click', ()=>{
 /* =======================
    Envío
 ======================= */
+/* =======================
+   Envío (form + iframe)
+======================= */
 sendBtn.addEventListener('click', async ()=>{
   const payload = {
-    token: SHARED_TOKEN, // ← ahora el token va en el CUERPO
+    token: SHARED_TOKEN,
     email: emailEl.value.trim(),
     weights: Object.fromEntries(labels.map((k,i)=>[k, +vals[i].toFixed(2)]))
   };
-  try{
-    sendBtn.disabled = true;
-    sendBtn.textContent = "Sending…";
-    const res = await fetch(WEBAPP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain"}, // simple => sin preflight
-      body: JSON.stringify(payload)
-    });
-    const txt = await res.text();
-    if(!res.ok) throw new Error(txt || ("HTTP "+res.status));
+
+  // Cargamos el JSON en un único campo "payload"
+  const ghost = document.getElementById('ghost');
+  const sink  = document.getElementById('sink');
+  const inp   = document.getElementById('payload');
+  inp.value   = JSON.stringify(payload);
+
+  // Feedback UI
+  sendBtn.disabled = true;
+  sendBtn.textContent = "Sending…";
+
+  // Cuando el iframe carga, asumimos que el backend respondió
+  const onDone = () => {
     sendBtn.textContent = "✅ Submitted — Thank you!";
-  }catch(err){
-    alert("Error submitting: " + (err.message||err));
-    sendBtn.textContent = "Submit";
-    updateSum();
-  }
+    sink.removeEventListener('load', onDone);
+  };
+  sink.addEventListener('load', onDone);
+
+  // Enviamos el form (no hay CORS en form-submit)
+  ghost.submit();
 });
+
 
 
 
