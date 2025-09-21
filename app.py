@@ -318,74 +318,44 @@ else:
     )
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-# --- Allocation (compacto, una sola línea por indicador) ---
-st.subheader("Allocation")
-
-if st.session_state.get("_init_inputs"):
+# ───────── ALLOCATION TABLE ─────────
+def render_allocation_table(indicators, weights):
+    rows = []
     for comp in indicators:
-        st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
-    st.session_state._init_inputs = False
+        val = st.session_state.get(f"num_{comp}", float(weights[comp]))
 
-# === Tabla compacta con columna "Adjust" (fallback sin ButtonColumn) ===
-st.markdown("<div class='data-editor-compact'>", unsafe_allow_html=True)
+        minus_btn = st.button("−", key=f"minus_{comp}", use_container_width=True)
+        plus_btn  = st.button("+", key=f"plus_{comp}",  use_container_width=True)
 
-# Construyo la tabla base a partir del estado actual
-df_weights = pd.DataFrame({
-    "Indicator": indicators,
-    "Weight": [float(st.session_state.weights[i]) for i in indicators],
-    "Adjust": ["0.00"] * len(indicators),  # columna para elegir el nudge
-})
+        if minus_btn:
+            val = max(0.0, round(val - 0.01, 2))
+        if plus_btn:
+            val = min(1.0, round(val + 0.01, 2))
 
-# Opciones de nudge (de a 0.01) — podés editar la lista si querés
-NUDGES = ["-0.05", "-0.02", "-0.01", "0.00", "+0.01", "+0.02", "+0.05"]
+        st.session_state[f"num_{comp}"] = val
+        st.session_state.weights[comp] = val
 
-edited = st.data_editor(
-    df_weights,
-    key="weights_editor_fallback",
-    hide_index=True,
-    use_container_width=True,
-    column_config={
-        "Indicator": st.column_config.TextColumn("Indicator", disabled=True),
-        "Weight": st.column_config.NumberColumn(
-            "Weight", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
-            help="Debe quedar en [0,1] y sumar 1.00"
-        ),
-        "Adjust": st.column_config.SelectboxColumn(
-            "Adjust", options=NUDGES, help="Ajuste rápido por fila"
-        ),
-    },
-)
+        rows.append(
+            f"<tr><td>{comp}</td><td class='r'>{val:.2f}</td>"
+            f"<td style='text-align:center'>{'- / +'}</td></tr>"
+        )
 
-# Aplico los ajustes seleccionados y sincronizo al session_state
-changed = False
-for ind, w, adj in zip(edited["Indicator"], edited["Weight"], edited["Adjust"]):
-    # 1) aplicar ajuste si no es "0.00"
-    delta = float(adj)
-    if abs(delta) > 1e-12:
-        w = float(np.round(min(max(w + delta, 0.0), 1.0) + 1e-9, 2))
-        changed = True
-    # 2) clamp/round por si editaron la celda Weight a mano
-    v = float(np.round(min(max(w, 0.0), 1.0) + 1e-9, 2))
-    if st.session_state.weights.get(ind) != v:
-        changed = True
-        st.session_state.weights[ind] = v
-        st.session_state[f"num_{ind}"] = v
+    table_html = f"""
+    <div class='rowbox'>
+      <div class='name center'>Allocation Points</div>
+      <table class="rank">
+        <thead><tr><th>Indicator</th><th>Weight</th><th>Adjust</th></tr></thead>
+        <tbody>
+          {''.join(rows)}
+        </tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
-# Si hubo cambios, reseteo la columna Adjust a "0.00" y refresco
-if changed:
-    st.session_state["weights_editor_fallback"] = {
-        "edited_rows": [],
-        "added_rows": [],
-        "deleted_rows": [],
-        "data": pd.DataFrame({
-            "Indicator": indicators,
-            "Weight": [st.session_state.weights[i] for i in indicators],
-            "Adjust": ["0.00"] * len(indicators),
-        }).to_dict("records"),
-    }
-    st.rerun()
+st.markdown("<hr/>", unsafe_allow_html=True)
+render_allocation_table(indicators, st.session_state.weights)
 
-st.markdown("</div>", unsafe_allow_html=True)
 
 
 
