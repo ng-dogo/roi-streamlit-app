@@ -187,6 +187,7 @@ resetBtn.addEventListener('click', ()=>{
 ======================= */
 sendBtn.addEventListener('click', async ()=>{
   const payload = {
+    token: SHARED_TOKEN, // ← token en el cuerpo
     email: emailEl.value.trim(),
     weights: Object.fromEntries(labels.map((k,i)=>[k, +vals[i].toFixed(2)]))
   };
@@ -194,12 +195,12 @@ sendBtn.addEventListener('click', async ()=>{
     sendBtn.disabled = true;
     sendBtn.textContent = "Sending…";
     const res = await fetch(WEBAPP_URL, {
-      method:"POST",
-      headers: {"Content-Type":"application/json","X-Auth":SHARED_TOKEN},
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // ← simple, sin preflight
       body: JSON.stringify(payload)
     });
     const txt = await res.text();
-    if(!res.ok) throw new Error(txt||("HTTP "+res.status));
+    if(!res.ok) throw new Error(txt || ("HTTP "+res.status));
     sendBtn.textContent = "✅ Submitted — Thank you!";
   }catch(err){
     alert("Error submitting: " + (err.message||err));
@@ -207,6 +208,7 @@ sendBtn.addEventListener('click', async ()=>{
     updateSum();
   }
 });
+
 
 /* =======================
    CSV loader (indicator,weight)
