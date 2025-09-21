@@ -99,7 +99,7 @@
    CONFIG
 ======================= */
 // Backend (Apps Script web app)
-const WEBAPP_URL   = "https://script.google.com/macros/s/AKfycbzpxbtE-ZQNSFy3pqNvbG41TXOUcIHjA2Is3eLqq1zdjR-MHaKK3qsozUDduR_AAMlDoQ/exec";
+const WEBAPP_URL   = "https://script.google.com/macros/s/AKfycbyM1MKRqiiioGTQejXCNgY55OvGa7tkjd2F3ndbahtQ74rY_xS9DS6mxik91Uioy5PM5w/exec";
 const SHARED_TOKEN = "TU_TOKEN_LARGO_AQUI"; // igual al del Apps Script
 
 // CSV en el mismo hosting (raíz del repo):
@@ -187,7 +187,7 @@ resetBtn.addEventListener('click', ()=>{
 ======================= */
 sendBtn.addEventListener('click', async ()=>{
   const payload = {
-    token: SHARED_TOKEN, // ← token en el cuerpo
+    token: SHARED_TOKEN, // ← ahora el token va en el CUERPO
     email: emailEl.value.trim(),
     weights: Object.fromEntries(labels.map((k,i)=>[k, +vals[i].toFixed(2)]))
   };
@@ -196,7 +196,7 @@ sendBtn.addEventListener('click', async ()=>{
     sendBtn.textContent = "Sending…";
     const res = await fetch(WEBAPP_URL, {
       method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" }, // ← simple, sin preflight
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // simple => sin preflight
       body: JSON.stringify(payload)
     });
     const txt = await res.text();
@@ -208,6 +208,7 @@ sendBtn.addEventListener('click', async ()=>{
     updateSum();
   }
 });
+
 
 
 /* =======================
