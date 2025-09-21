@@ -81,40 +81,13 @@ hr{border:none;border-top:1px solid rgba(127,127,127,.25);margin:1rem 0}
   width: 0%;
 }
 
-
-/* ===== Mantener label | input en una sola fila en móvil ===== */
-.alloc-wrap [data-testid="stHorizontalBlock"]{
-  display:flex;
-  flex-wrap: nowrap !important;   /* evita que las columnas se apilen */
-  align-items: center;
-  gap: .5rem;
+/* Tabla compacta en móvil */
+.data-editor-compact [data-testid="stDataFrame"] table {
+  font-size: 0.95rem;
 }
-.alloc-wrap [data-testid="column"]:first-child{
-  flex: 1 1 auto;                 /* el label ocupa el resto */
-  min-width: 0;
-}
-.alloc-wrap [data-testid="column"]:last-child{
-  flex: 0 0 130px;                /* ancho del box de peso (ajustable) */
-  max-width: 130px;
-}
-
-.alloc-wrap [data-testid="stNumberInput"]{
-  margin: .1rem 0 !important;
-}
-.alloc-wrap [data-testid="stNumberInput"] input{
-  text-align: center;
-  font-weight: 600;
-  height: 36px;
-  padding: .2rem .4rem;
-}
-
-/* Afinado específico para pantallas chicas */
-@media (max-width: 480px){
-  .alloc-wrap [data-testid="column"]:last-child{
-    flex-basis: 110px;            /* más angosto en móvil */
-    max-width: 110px;
-  }
-  .name{ margin:.1rem 0 .05rem; font-size:.95rem; }
+.data-editor-compact [data-testid="stDataFrame"] td,
+.data-editor-compact [data-testid="stDataFrame"] th{
+  padding: .25rem .4rem !important;
 }
 
 
@@ -353,27 +326,45 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
-# --- Allocation (label | input en la MISMA fila también en móvil) ---
-st.markdown("<div class='alloc-wrap'>", unsafe_allow_html=True)
+# === Tabla compacta editable: Indicador | Peso ===
+st.markdown("<div class='data-editor-compact'>", unsafe_allow_html=True)
 
-for comp in indicators:
-    col_label, col_input = st.columns([1, 0.42])  # proporción base; la CSS manda en mobile
-    with col_label:
-        st.markdown(f"<div class='name' style='margin:.1rem 0'>{comp}</div>", unsafe_allow_html=True)
-    with col_input:
-        st.number_input(
-            label="",
-            key=f"num_{comp}",
-            min_value=0.0,
-            max_value=1.0,
-            step=0.01,
-            format="%.2f",
-            label_visibility="collapsed",
-            on_change=make_on_change(comp),
-            disabled=st.session_state.saving
-        )
+df_weights = pd.DataFrame({
+    "Indicator": indicators,
+    "Weight": [float(st.session_state.weights[i]) for i in indicators],
+})
+
+edited = st.data_editor(
+    df_weights,
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "Indicator": st.column_config.TextColumn("Indicator", disabled=True),
+        "Weight": st.column_config.NumberColumn(
+            "Weight",
+            min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
+            help="Debe quedar en [0,1] y sumar 1.00"
+        ),
+    },
+)
+
+# Sincroniza cambios a session_state (redondeo y clamp)
+changed = False
+for ind, val in zip(edited["Indicator"], edited["Weight"]):
+    v = float(np.round(min(max(val, 0.0), 1.0) + 1e-9, 2))
+    if st.session_state.weights.get(ind) != v:
+        st.session_state.weights[ind] = v
+        st.session_state[f"num_{ind}"] = v
+        changed = True
+
+# (Opcional) si querés que siempre queden en centésimas conservando suma:
+# st.session_state.weights = round_to_cents_preserve_total(st.session_state.weights)
+
+if changed:
+    st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
