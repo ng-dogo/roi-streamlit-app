@@ -97,10 +97,19 @@ div[data-testid="stNumberInput"] input {
   padding: .2rem .4rem;
 }
 
-/* En móviles, mantener el input angosto para que todo quede en una línea */
 @media (max-width: 480px){
-  div[data-testid="stNumberInput"] > div { min-width: 96px; }
+  .stNumberInput input { 
+    text-align: center; 
+    padding: .25rem; 
+    font-size: .9rem; 
+  }
+  .stButton>button { 
+    padding:.2rem; 
+    font-size:.9rem; 
+    min-height:0; 
+  }
 }
+
 
 
 </style>
@@ -337,22 +346,41 @@ if st.session_state.get("_init_inputs"):
         st.session_state[f"num_{comp}"] = float(st.session_state.weights[comp])
     st.session_state._init_inputs = False
 
+STEP = 0.01  # incremento/decremento
+
 for comp in indicators:
-    name_col, input_col = st.columns([5, 2])  # relación pensada para pantallas chicas
-    with name_col:
-        st.markdown(f"<div class='name' style='margin:.1rem 0'>{comp}</div>", unsafe_allow_html=True)
-    with input_col:
+    cols = st.columns([0.55, 0.25, 0.10, 0.10])  # proporción columnas (ajustable)
+
+    with cols[0]:
+        st.markdown(f"<div class='name'>{comp}</div>", unsafe_allow_html=True)
+
+    with cols[1]:
         st.number_input(
-            label="",
+            "",
             key=f"num_{comp}",
             min_value=0.0,
             max_value=1.0,
-            step=0.01,
+            step=STEP,
             format="%.2f",
             label_visibility="collapsed",
             on_change=make_on_change(comp),
             disabled=st.session_state.saving
         )
+
+    with cols[2]:
+        if st.button("−", key=f"dec_{comp}", use_container_width=True, disabled=st.session_state.saving):
+            v = max(0.0, round(st.session_state[f"num_{comp}"] - STEP, 2))
+            st.session_state[f"num_{comp}"] = v
+            st.session_state.weights[comp] = v
+            st.rerun()
+
+    with cols[3]:
+        if st.button("+", key=f"inc_{comp}", use_container_width=True, disabled=st.session_state.saving):
+            v = min(1.0, round(st.session_state[f"num_{comp}"] + STEP, 2))
+            st.session_state[f"num_{comp}"] = v
+            st.session_state.weights[comp] = v
+            st.rerun()
+
 
 
 
